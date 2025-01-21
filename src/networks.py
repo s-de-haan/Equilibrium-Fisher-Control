@@ -1,8 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
-
-from src.utils import get_derivative, ModelOutput
 
 
 class ModulationReLULayer(nn.Module):
@@ -48,7 +45,7 @@ class DFC_SSA_network(nn.Module):
             layer_class(
                 _layers[-2],
                 _layers[-1],
-                activation_fn=nn.Sigmoid(),
+                activation_fn=Linear(),
             )
         )
 
@@ -63,7 +60,7 @@ class DFC_SSA_network(nn.Module):
     @property
     def linear_activations(self):
         return [layer.linear_activations for layer in self.layers]
-    
+
     def forward(self, x):
         self.input = x
         for layer in self.layers:
@@ -71,17 +68,16 @@ class DFC_SSA_network(nn.Module):
         self.y_hat = x
         return x
 
-    def backward(self):
+    def backward(self, y):
+        self._set_targets(y)
         self._non_dynamical_inversion()
 
         for layer in self.layers:
             layer.backward()
 
-    def set_targets(self, y):
+    def _set_targets(self, y):
         """MSE loss solution"""
-        self.targets = (
-            1 - 2 * self._target_lr
-        ) * self.y_hat + 2 * self._target_lr * y
+        self.targets = (1 - 2 * self._target_lr) * self.y_hat + 2 * self._target_lr * y
 
     def _calculate_full_jacobian(self):
         Js = []
@@ -159,10 +155,10 @@ class DFC_layer(nn.Module):
         self.name = name
 
         self.activation_derivative = get_derivative(self.activation_fn)
-
         self.feedforward = nn.Sequential(
             nn.Linear(self.in_features, self.out_features), self.activation_fn
         )
+
         nn.init.kaiming_normal_(self.feedforward[0].weight)
         self._weights = self.feedforward[0].weight
         self._bias = self.feedforward[0].bias
@@ -196,3 +192,106 @@ class DFC_layer(nn.Module):
 
         self._weights.grad = weights_grad
         self._bias.grad = bias_grad
+
+
+class BP_network(nn.Module):
+    def __init__(self, config, name="BP_network") -> None:
+        super().__init__()
+        self.name = name
+
+        _layers = config.layers
+        activation_fn = nn.ReLU()
+
+        self.layers = nn.ModuleList()
+        for i in range(len(_layers) - 2):
+            self.layers.append(
+                BP_layer(
+                    _layers[i],
+                    _layers[i + 1],
+                    activation_fn=activation_fn,
+                )
+            )
+        self.layers.append(
+            BP_layer(
+                _layers[-2],
+                _layers[-1],
+                activation_fn=Linear(),
+            )
+        )
+
+    def forward(self, x):
+        self.input = x
+        for layer in self.layers:
+            x = layer(x)
+        self.y_hat = x
+        return x
+
+
+class BP_layer(nn.Module):
+    def __init__(
+        self, in_features, out_features, activation_fn=nn.ReLU(), name="BP_layer"
+    ) -> None:
+        super(BP_layer, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.activation_fn = activation_fn
+        self.name = name
+
+        self.activation_derivative = get_derivative(self.activation_fn)
+        self.feedforward = nn.Sequential(
+            nn.Linear(self.in_features, self.out_features), self.activation_fn
+        )
+
+        nn.init.kaiming_normal_(self.feedforward[0].weight)
+        self._weights = self.feedforward[0].weight
+        self._bias = self.feedforward[0].bias
+
+    @property
+    def weights(self):
+        return self._weights
+
+    @property
+    def bias(self):
+        return self._bias
+
+    @property
+    def shape(self):
+        return self._weights.shape
+
+    def forward(self, x):
+        a = torch.matmul(x, self.weights.t())
+        a += self.bias.unsqueeze(0).expand_as(a)
+        self.activations = self.activation_fn(a)
+        self.linear_activations = a
+
+        return self.activations
+
+
+class Linear(nn.Module):
+    def forward(self, x):
+        return x
+
+
+def derivative_sigmoid(x):
+    return torch.mul(torch.sigmoid(x), 1.0 - torch.sigmoid(x))
+
+
+def derivative_linear(x):
+    return torch.ones_like(x)
+
+
+def derivative_relu(x):
+    grad = torch.ones_like(x)
+    grad[x < 0] = 0
+    return grad
+
+
+def get_derivative(activation_fn):
+    if isinstance(activation_fn, torch.nn.Sigmoid):
+        return derivative_sigmoid
+    elif isinstance(activation_fn, torch.nn.ReLU):
+        return derivative_relu
+    elif isinstance(activation_fn, Linear):
+        return derivative_linear
+    else:
+        raise ValueError(f"Activation function {activation_fn} not supported")

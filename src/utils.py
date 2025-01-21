@@ -50,22 +50,3 @@ def set_device():
         device = "cpu"
 
     return device
-
-
-def derivative_sigmoid(x):
-    return torch.mul(torch.sigmoid(x), 1.0 - torch.sigmoid(x))
-
-
-def derivative_relu(x):
-    grad = torch.ones_like(x)
-    grad[x < 0] = 0
-    return grad
-
-
-def get_derivative(activation_fn):
-    if isinstance(activation_fn, torch.nn.Sigmoid):
-        return derivative_sigmoid
-    elif isinstance(activation_fn, torch.nn.ReLU):
-        return derivative_relu
-    else:
-        raise ValueError(f"Activation function {activation_fn} not supported")

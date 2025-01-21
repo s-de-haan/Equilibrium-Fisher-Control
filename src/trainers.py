@@ -38,7 +38,6 @@ class Trainer:
             msg=f"Training:\n - epochs: {self.config.epochs}\n - batch_size: {self.config.batch_size}\n - optimizer: {self.config.optimizer}\n - scheduler: {self.config.scheduler}\n - device: {self.config.device}\n - output_dir: {self.config.output_dir}\n - seed: {self.config.seed}\n - encoder_layers: {self.config.encoder_layers}\n - decoder_layers: {self.config.decoder_layers}\n - learning_rate: {self.config.lr}\n - gamma: {self.config.gamma}\n - patience: {self.config.patience}\n - num_workers: {self.config.num_workers}\n - training_dir: {self.training_dir}\n - model: {self.model.name}\n"
         )
 
-        # TODO log to output dir with get_file_logger
         best_train_loss = 1e10
         best_test_loss = 1e10
 
@@ -61,12 +60,12 @@ class Trainer:
                 epoch_test_loss = self._test_step(epoch)
                 metrics.epoch_test_loss = epoch_test_loss
 
-            if epoch_test_loss < best_test_loss:
-                best_test_loss = epoch_test_loss
-                best_model = deepcopy(self.model)
-                self._best_model = best_model
-            if epoch_train_loss < best_train_loss:
-                best_train_loss = epoch_train_loss
+            # if epoch_test_loss < best_test_loss:
+            #     best_test_loss = epoch_test_loss
+            #     best_model = deepcopy(self.model)
+            #     self._best_model = best_model
+            # if epoch_train_loss < best_train_loss:
+            #     best_train_loss = epoch_train_loss
 
             self.callback_handler.on_epoch_end(training_config=self.config)
             self.callback_handler.on_log(
@@ -75,8 +74,8 @@ class Trainer:
                 logger=logger,
                 epoch=epoch,
             )
-
-        self._save_model(best_model, dir_path=self.training_dir)
+            
+        # self._save_model(best_model, dir_path=self.training_dir)
         logger.info(
             f"\nBest train loss: {best_train_loss}, Best test loss: {best_test_loss}"
         )
@@ -103,13 +102,13 @@ class Trainer:
         for (X, y) in self.train_loader:
             X = X.to(self.device)
             y = y.to(self.device)
+            
             y_hat = self.model(X)
 
             loss = self.loss_fn(y_hat, y)
 
             self.optimizer.zero_grad()
-            self.model.set_targets(y)
-            self.model.backward()
+            self.model.backward(y)
             self.optimizer.step()
 
             epoch_loss += loss.item()
@@ -153,19 +152,18 @@ class Trainer:
             loss = self.loss_fn(y_hat, y)
 
             epoch_loss += loss.item()
-
-            _, predicted = torch.max(y_hat.data, 1)
             total += y.size(0)
-            correct += (predicted == y.argmax(dim=1)).sum().item()
+            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
 
             if epoch_loss != epoch_loss:
                 raise ArithmeticError("NaN detected in test loss")
-
             self.callback_handler.on_test_step_end(training_config=self.config)
+
+        print(y_hat.argmax(dim=1), y.argmax(dim=1))
 
         epoch_loss /= len(self.test_loader)
         accuracy = 100 * correct / total
-        print(f"Accuracy: {accuracy}")
+        print(f"\nAccuracy: {accuracy}")
 
         return epoch_loss
 
