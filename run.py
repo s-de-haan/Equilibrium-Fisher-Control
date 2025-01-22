@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from src.networks import DFC_SSA_network, Linear, BP_network
+from networks.networks import DFC_SSA_network, DFC_SSA_Mult_network, BP_network
 from src.datasets import MNIST
 from src.trainers import Trainer
 from src.utils import dotdict, set_device
@@ -27,10 +27,10 @@ def main():
     config = dotdict(config)
 
     # Load data
-    train_loader, test_loader = MNIST(config=config).get_dataloaders(batch_size=config.batch_size)
+    train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_SSA_network(config=config)
+    model = DFC_SSA_Mult_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()
