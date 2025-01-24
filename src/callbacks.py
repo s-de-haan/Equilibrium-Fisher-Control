@@ -27,6 +27,16 @@ class TrainingCallback:
         Event called at the end of training.
         """
 
+    def on_task_begin(self, training_config, **kwargs):
+        """
+        Event called at the beginning of a task.
+        """
+
+    def on_task_end(self, training_config, **kwargs):
+        """
+        Event called at the end of a task.
+        """
+
     def on_epoch_begin(self, training_config, **kwargs):
         """
         Event called at the beginning of an epoch.
@@ -124,6 +134,12 @@ class CallbackHandler:
 
     def on_test_step_end(self, training_config, **kwargs):
         self.call_event("on_test_step_end", training_config, **kwargs)
+
+    def on_task_begin(self, training_config, **kwargs):
+        self.call_event("on_task_begin", training_config, **kwargs)
+    
+    def on_task_end(self, training_config, **kwargs):
+        self.call_event("on_task_end", training_config, **kwargs)
 
     def on_train_begin(self, training_config, **kwargs):
         self.call_event("on_train_begin", training_config, **kwargs)

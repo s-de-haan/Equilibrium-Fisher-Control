@@ -75,11 +75,9 @@ class DFC_SSA_Mult_network(SSAInterface):
             torch.matmul(J, J_T) + self._alpha_di * torch.eye(J.shape[1]), error
         )
 
-        e_psi = torch.exp(torch.matmul(J_T, u).squeeze(-1))
-        if random.random() < 0.005:
-            print("e_psi max:", e_psi.max())
-        e_psis = torch.tensor_split(
-            e_psi,
+        psi = torch.matmul(J_T, u).squeeze(-1)
+        psis = torch.tensor_split(
+            psi,
             torch.cumsum(torch.tensor(self.layer_sizes[:-1]), dim=0).cpu(),
             dim=1,
         )
@@ -87,23 +85,29 @@ class DFC_SSA_Mult_network(SSAInterface):
         rs = [self.input]
 
         for i, layer in enumerate(self.layers):
-            print(i)
             v_ff = torch.matmul(rs[i], layer.weights.t())
             v_ff += layer.bias.unsqueeze(0).expand_as(v_ff)
             v = v_ff
 
             r_ff = layer.activation_fn(v_ff)
-            r = layer.activation_fn(v) * e_psis[i]
+            activation_result = layer.activation_fn(v)
+            if i == len(self.layers) - 1:  # linear output layer
+                r = torch.where(  # if negative do *e^-psi if positive do *e^psi
+                    activation_result > 0,
+                    activation_result * torch.exp(psis[i]),
+                    activation_result * torch.exp(-psis[i]),
+                )
+            else:
+                r = activation_result * torch.exp(psis[i])
             rs.append(r)
 
             layer.v_ff = v_ff
             layer.v = v
-            layer.e_psi = e_psis[i]
+            layer.e_psi = torch.exp(psis[i])
 
             layer.r = r
             layer.r_ff = r_ff
             layer.r_prev = rs[i]
-
 
 
 class DFC_SSA_network(SSAInterface):

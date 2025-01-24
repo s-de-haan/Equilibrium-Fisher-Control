@@ -16,156 +16,16 @@ from src.utils import dotdict
 logger = logging.getLogger(__name__)
 
 
-class Trainer:
-    def __init__(self, model, train_loader, test_loader, config, callbacks=None) -> None:
+class TrainerInterface:
+    def __init__(self, model, config, callbacks=None):
         self.model = model
-        self.train_loader = train_loader
-        self.test_loader = test_loader
-        self.callbacks = callbacks
         self.config = config
-        self.device = self.config.device
-        self.loss_fn = self.config.loss_fn
+        self.device = config.device
+        self.loss_fn = config.loss_fn
+        self.callbacks = callbacks
 
-        self._set_device(self.config.device)
-
-        model.to(self.device)
-
-    def train(self) -> None:
-        self._prepare_training()
-        self.callback_handler.on_train_begin(training_config=self.config)
-
-        logger.info(
-            msg=f"Training:\n - epochs: {self.config.epochs}\n - batch_size: {self.config.batch_size}\n - optimizer: {self.config.optimizer}\n - scheduler: {self.config.scheduler}\n - device: {self.config.device}\n - output_dir: {self.config.output_dir}\n - seed: {self.config.seed}\n - encoder_layers: {self.config.encoder_layers}\n - decoder_layers: {self.config.decoder_layers}\n - learning_rate: {self.config.lr}\n - gamma: {self.config.gamma}\n - patience: {self.config.patience}\n - num_workers: {self.config.num_workers}\n - training_dir: {self.training_dir}\n - model: {self.model.name}\n"
-        )
-
-        best_train_loss = 1e10
-        best_test_loss = 1e10
-
-        self.model.zero_grad()
-
-        for epoch in range(1, self.config.epochs + 1):
-            self.callback_handler.on_epoch_begin(
-                training_config=self.config,
-                epoch=epoch,
-                train_loader=self.train_loader,
-                test_loader=self.test_loader,
-            )
-
-            metrics = dotdict()
-
-            epoch_train_loss = self._train_step(epoch)
-            metrics.epoch_train_loss = epoch_train_loss
-
-            if self.test_loader is not None:
-                epoch_test_loss = self._test_step(epoch)
-                metrics.epoch_test_loss = epoch_test_loss
-
-            # if epoch_test_loss < best_test_loss:
-            #     best_test_loss = epoch_test_loss
-            #     best_model = deepcopy(self.model)
-            #     self._best_model = best_model
-            # if epoch_train_loss < best_train_loss:
-            #     best_train_loss = epoch_train_loss
-
-            self.callback_handler.on_epoch_end(training_config=self.config)
-            self.callback_handler.on_log(
-                self.config,
-                metrics,
-                logger=logger,
-                epoch=epoch,
-            )
-            
-        # self._save_model(best_model, dir_path=self.training_dir)
-        logger.info(
-            f"\nBest train loss: {best_train_loss}, Best test loss: {best_test_loss}"
-        )
-
-    def _train_step(self, epoch: int):
-        """The trainer performs training loop over the train_loader.
-
-        Parameters:
-            epoch (int): The current epoch number
-
-        Returns:
-            (torch.Tensor): The step training loss
-        """
-        self.callback_handler.on_train_step_begin(
-            training_config=self.config,
-            train_loader=self.train_loader,
-            epoch=epoch,
-        )
-
-        self.model.train()
-
-        epoch_loss = 0
-
-        for (X, y) in self.train_loader:
-            X = X.to(self.device)
-            y = y.to(self.device)
-            
-            y_hat = self.model(X)
-
-            loss = self.loss_fn(y_hat, y)
-
-            self.optimizer.zero_grad()
-            self.model.backward(y)
-            self.optimizer.step()
-
-            epoch_loss += loss.item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in train loss")
-
-            self.callback_handler.on_train_step_end(training_config=self.config)
-
-        epoch_loss /= len(self.train_loader)
-
-        return epoch_loss
-
-    @torch.no_grad()
-    def _test_step(self, epoch: int):
-        """Perform an testuation step
-
-        Parameters:
-            epoch (int): The current epoch number
-
-        Returns:
-            (torch.Tensor): The testuation loss
-        """
-
-        self.callback_handler.on_test_step_begin(
-            training_config=self.config,
-            test_loader=self.test_loader,
-            epoch=epoch,
-        )
-
-        epoch_loss = 0
-        total = 0
-        correct = 0
-
-        for (X, y) in self.test_loader:
-            X = X.to(self.device)
-            y = y.to(self.device)
-            with torch.no_grad():
-                y_hat = self.model(X)
-
-            loss = self.loss_fn(y_hat, y)
-
-            epoch_loss += loss.item()
-            total += y.size(0)
-            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in test loss")
-            self.callback_handler.on_test_step_end(training_config=self.config)
-
-        print(y_hat.argmax(dim=1), y.argmax(dim=1))
-
-        epoch_loss /= len(self.test_loader)
-        accuracy = 100 * correct / total
-        print(f"\nAccuracy: {accuracy}")
-
-        return epoch_loss
+        self._set_device(self.device)
+        self.model.to(self.device)
 
     def _set_device(self, device: str):
         self.device = torch.device(device)
@@ -263,3 +123,214 @@ class Trainer:
 
         self.callback_handler.add_callback(ProgressBarCallback())
         self.callback_handler.add_callback(MetricConsolePrinterCallback())
+
+    def train_step(self, batch):
+        raise NotImplementedError("train_step must be implemented in a subclass.")
+
+    def test_step(self, batch):
+        raise NotImplementedError("test_step must be implemented in a subclass.")
+
+    def train(self):
+        raise NotImplementedError("train must be implemented in a subclass.")
+
+
+class Trainer(TrainerInterface):
+    def __init__(
+        self, model, train_loader, test_loader, config, callbacks=None
+    ) -> None:
+        super().__init__(Trainer, model, config, callbacks)
+        self.train_loader = train_loader
+        self.test_loader = test_loader
+
+    def train(self) -> None:
+        self._prepare_training()
+        self.callback_handler.on_train_begin(training_config=self.config)
+
+        logger.info(
+            msg=f"Training:\n - epochs: {self.config.epochs}\n - batch_size: {self.config.batch_size}\n - optimizer: {self.config.optimizer}\n - scheduler: {self.config.scheduler}\n - device: {self.config.device}\n - output_dir: {self.config.output_dir}\n - seed: {self.config.seed}\n - encoder_layers: {self.config.encoder_layers}\n - decoder_layers: {self.config.decoder_layers}\n - learning_rate: {self.config.lr}\n - gamma: {self.config.gamma}\n - patience: {self.config.patience}\n - num_workers: {self.config.num_workers}\n - training_dir: {self.training_dir}\n - model: {self.model.name}\n"
+        )
+
+        best_train_loss = 1e10
+        best_test_loss = 1e10
+
+        self.model.zero_grad()
+
+        for epoch in range(1, self.config.epochs + 1):
+            self.callback_handler.on_epoch_begin(
+                training_config=self.config,
+                epoch=epoch,
+                train_loader=self.train_loader,
+                test_loader=self.test_loader,
+            )
+
+            metrics = dotdict()
+
+            epoch_train_loss = self._train_step(epoch)
+            metrics.epoch_train_loss = epoch_train_loss
+
+            if self.test_loader is not None:
+                epoch_test_loss = self._test_step(epoch)
+                metrics.epoch_test_loss = epoch_test_loss
+
+            self.callback_handler.on_epoch_end(training_config=self.config)
+            self.callback_handler.on_log(
+                self.config,
+                metrics,
+                logger=logger,
+                epoch=epoch,
+            )
+
+        logger.info(
+            f"\nBest train loss: {best_train_loss}, Best test loss: {best_test_loss}"
+        )
+
+    def _train_step(self, epoch: int):
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        self.model.train()
+
+        epoch_loss = 0
+
+        for X, y in self.train_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            y_hat = self.model(X)
+
+            loss = self.loss_fn(y_hat, y)
+
+            self.optimizer.zero_grad()
+            self.model.backward(y)
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in train loss")
+
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.train_loader)
+
+        return epoch_loss
+
+    @torch.no_grad()
+    def _test_step(self, epoch: int):
+        self.callback_handler.on_test_step_begin(
+            training_config=self.config,
+            test_loader=self.test_loader,
+            epoch=epoch,
+        )
+
+        epoch_loss = 0
+        total = 0
+        correct = 0
+
+        for X, y in self.test_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+            with torch.no_grad():
+                y_hat = self.model(X)
+
+            loss = self.loss_fn(y_hat, y)
+
+            epoch_loss += loss.item()
+            total += y.size(0)
+            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in test loss")
+            self.callback_handler.on_test_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.test_loader)
+        accuracy = 100 * correct / total
+        print(f"\nAccuracy: {accuracy}")
+
+        return epoch_loss
+
+
+class TrainerCL(TrainerInterface):
+    def __init__(self, model, tasks_dataloaders, config, callbacks=None):
+        super().__init__(model, config, callbacks)
+        self.tasks_dataloaders = tasks_dataloaders
+        self.task_results = []
+
+    def train(self):
+        self._prepare_training()
+        self.callback_handler.on_train_begin(training_config=self.config)
+
+        for task_id, (train_loader, _) in enumerate(self.tasks_dataloaders):
+            logger.info(f"Starting Task {task_id + 1}/{len(self.tasks_dataloaders)}")
+            self.callback_handler.on_task_begin(training_config=self.config, task_id=task_id + 1)
+
+            for epoch in range(self.config.epochs):
+                print(epoch)
+                self.callback_handler.on_epoch_begin(training_config=self.config, epoch=epoch + 1)
+                train_loss = 0.0
+
+                for batch in train_loader:
+                    loss = self.train_step(batch)
+                    train_loss += loss
+
+                train_loss /= len(train_loader)
+                logger.info(
+                    f"Task {task_id + 1}, Epoch {epoch + 1}/{self.config.epochs}, Loss: {train_loss:.4f}"
+                )
+                self.callback_handler.on_epoch_end(training_config=self.config, epoch=epoch + 1, loss=train_loss)
+
+            # Test on all seen tasks
+            self._test_seen_tasks(task_id)
+            self.callback_handler.on_task_end(training_config=self.config, task_id=task_id + 1)
+
+        self.callback_handler.on_train_end()
+
+    def train_step(self, batch):
+        self.model.train()
+        inputs, targets = batch
+        inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+        self.optimizer.zero_grad()
+        outputs = self.model(inputs)
+        loss = self.loss_fn(outputs, targets)
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+
+    def test_step(self, batch):
+        self.model.eval()
+        inputs, targets = batch
+        inputs, targets = inputs.to(self.device), targets.to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(inputs)
+            loss = self.loss_fn(outputs, targets)
+            accuracy = (torch.argmax(outputs, dim=1) == torch.argmax(targets, dim=1)).float().mean().item()
+
+        return loss.item(), accuracy
+
+    def _test_seen_tasks(self, current_task_id):
+        results = {}
+        for task_id in range(current_task_id + 1):
+            logger.info(f"Testing on Task {task_id + 1}/{current_task_id + 1}")
+            test_loader = self.tasks_dataloaders[task_id][1]
+
+            test_loss, test_acc = 0.0, 0.0
+            for batch in test_loader:
+                loss, acc = self.test_step(batch)
+                test_loss += loss
+                test_acc += acc
+
+            test_loss /= len(test_loader)
+            test_acc /= len(test_loader)
+            logger.info(
+                f"Task {task_id + 1} - Loss: {test_loss:.4f}, Accuracy: {test_acc:.4f}"
+            )
+
+            results[f"Task {task_id + 1}"] = {"loss": test_loss, "accuracy": test_acc}
+
+        self.task_results.append(deepcopy(results))
