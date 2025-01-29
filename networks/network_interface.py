@@ -35,7 +35,6 @@ class NetworkInterface(nn.Module):
 
         self.layers = nn.ModuleList()
         for i in range(len(_layers) - 2):
-                
             self.layers.append(
                 layer_class(
                     _layers[i],
@@ -50,3 +49,63 @@ class NetworkInterface(nn.Module):
                 activation_fn=Linear(),
             )
         )
+
+
+class JacobianInterface(NetworkInterface):
+    def __init__(self, layer_class, activation_fn, config, name) -> None:
+        super().__init__(layer_class, activation_fn, config, name)
+
+        if config.mode == "ndi":
+            self._inversion = self._non_dynamical_inversion
+        else:
+            self._inversion = self._dynamical_inversion
+            self.dt = config.dt_di
+            self.apical_time_constant = self.dt
+            self.time_constant_ratio = config.time_constant_ratio
+            self.k_p = config.k_p
+            self.tmax = config.tmax_di
+
+            assert self.k_p > 0
+            assert self.apical_time_constant > 0
+
+        self.target_lr = config.target_lr
+        self.alpha = config.alpha_di
+
+    def backward(self, y):
+        self._set_targets(y)
+        self._inversion()
+
+        for layer in self.layers:
+            layer.backward()
+
+    def _set_targets(self, y):
+        """MSE loss solution"""
+        self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
+        self.bzs = self.targets.shape[0]
+        self.output_size = self.targets.shape[1]
+
+    def _calculate_full_jacobian(self):
+        Js = []
+
+        activations_derivatives = [
+            layer.activation_derivative(layer.linear_activations)
+            for layer in self.layers
+        ]
+
+        output_sz = self.layers[-1].out_features
+
+        # Last layer
+        Js.append(
+            activations_derivatives[-1].view(self.bzs, output_sz, 1)
+            * torch.eye(output_sz).repeat(self.bzs, 1, 1)
+        )
+        # Rest of the layers
+        for i in range(len(self.layers) - 2, -1, -1):
+            J = activations_derivatives[i].unsqueeze(1) * torch.matmul(
+                Js[-1], self.layers[i + 1].weights
+            )
+            Js.append(J)
+
+        Js.reverse()
+
+        return torch.cat(Js, dim=2), Js

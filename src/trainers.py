@@ -2,6 +2,7 @@ import datetime
 import json
 import torch
 import os
+import sys
 import logging
 
 from copy import deepcopy
@@ -43,11 +44,32 @@ class TrainerInterface:
         self.callback_handler.on_save(self.config)
 
     def _setup_logger(self):
-        logging.basicConfig(
-            filename=os.path.join(self.training_dir, "training.log"),
-            level=logging.INFO,
-            format="%(message)s",
-        )
+        # logging.basicConfig(
+        #     filename=os.path.join(self.training_dir, "training.log"),
+        #     level=logging.INFO,
+        #     format="%(message)s",
+        # )
+
+        # Create a logger
+        logger = logging.getLogger()
+        logger.setLevel(logging.INFO)
+
+        # Create file handler which logs even debug messages
+        fh = logging.FileHandler(os.path.join(self.training_dir, "training.log"))
+        fh.setLevel(logging.INFO)
+
+        # Create console handler with a higher log level
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(logging.INFO)
+
+        # Create formatter and add it to the handlers
+        formatter = logging.Formatter("%(message)s")
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+
+        # Add the handlers to the logger
+        logger.addHandler(fh)
+        logger.addHandler(ch)
 
     def _prepare_training(self):
         self._set_seed(self.config.seed)
@@ -138,7 +160,7 @@ class Trainer(TrainerInterface):
     def __init__(
         self, model, train_loader, test_loader, config, callbacks=None
     ) -> None:
-        super().__init__(Trainer, model, config, callbacks)
+        super().__init__(model, config, callbacks)
         self.train_loader = train_loader
         self.test_loader = test_loader
 
@@ -265,30 +287,38 @@ class TrainerCL(TrainerInterface):
 
         for task_id, (train_loader, _) in enumerate(self.tasks_dataloaders):
             logger.info(f"Starting Task {task_id + 1}/{len(self.tasks_dataloaders)}")
-            self.callback_handler.on_task_begin(training_config=self.config, task_id=task_id + 1)
+            self.callback_handler.on_task_begin(
+                training_config=self.config, task_id=task_id + 1
+            )
 
             for epoch in range(self.config.epochs):
-                print(epoch)
-                self.callback_handler.on_epoch_begin(training_config=self.config, epoch=epoch + 1)
+                self.callback_handler.on_epoch_begin(
+                    training_config=self.config, epoch=epoch + 1
+                )
                 train_loss = 0.0
 
+                self.callback_handler.on_train_step_begin(
+                    training_config=self.config, train_loader=train_loader, epoch=epoch
+                )
                 for batch in train_loader:
-                    loss = self.train_step(batch)
+                    loss = self._train_step(batch)
                     train_loss += loss
 
                 train_loss /= len(train_loader)
                 logger.info(
                     f"Task {task_id + 1}, Epoch {epoch + 1}/{self.config.epochs}, Loss: {train_loss:.4f}"
                 )
-                self.callback_handler.on_epoch_end(training_config=self.config, epoch=epoch + 1, loss=train_loss)
+                self.callback_handler.on_epoch_end(
+                    training_config=self.config, epoch=epoch + 1, loss=train_loss
+                )
 
             # Test on all seen tasks
             self._test_seen_tasks(task_id)
-            self.callback_handler.on_task_end(training_config=self.config, task_id=task_id + 1)
+            self.callback_handler.on_task_end(
+                training_config=self.config, task_id=task_id + 1
+            )
 
-        self.callback_handler.on_train_end()
-
-    def train_step(self, batch):
+    def _train_step(self, batch):
         self.model.train()
         inputs, targets = batch
         inputs, targets = inputs.to(self.device), targets.to(self.device)
@@ -299,9 +329,11 @@ class TrainerCL(TrainerInterface):
         loss.backward()
         self.optimizer.step()
 
+        self.callback_handler.on_train_step_end(training_config=self.config)
+
         return loss.item()
 
-    def test_step(self, batch):
+    def _test_step(self, batch):
         self.model.eval()
         inputs, targets = batch
         inputs, targets = inputs.to(self.device), targets.to(self.device)
@@ -309,7 +341,12 @@ class TrainerCL(TrainerInterface):
         with torch.no_grad():
             outputs = self.model(inputs)
             loss = self.loss_fn(outputs, targets)
-            accuracy = (torch.argmax(outputs, dim=1) == torch.argmax(targets, dim=1)).float().mean().item()
+            accuracy = (
+                (torch.argmax(outputs, dim=1) == torch.argmax(targets, dim=1))
+                .float()
+                .mean()
+                .item()
+            )
 
         return loss.item(), accuracy
 
@@ -318,12 +355,21 @@ class TrainerCL(TrainerInterface):
         for task_id in range(current_task_id + 1):
             logger.info(f"Testing on Task {task_id + 1}/{current_task_id + 1}")
             test_loader = self.tasks_dataloaders[task_id][1]
+            self.test_loader = test_loader
+
+            self.callback_handler.on_test_step_begin(
+                training_config=self.config,
+                test_loader=self.test_loader,
+                epoch=task_id,
+            )
 
             test_loss, test_acc = 0.0, 0.0
             for batch in test_loader:
-                loss, acc = self.test_step(batch)
+                loss, acc = self._test_step(batch)
                 test_loss += loss
                 test_acc += acc
+
+                self.callback_handler.on_test_step_end(training_config=self.config)
 
             test_loss /= len(test_loader)
             test_acc /= len(test_loader)

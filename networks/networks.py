@@ -1,78 +1,32 @@
 import torch
 import torch.nn as nn
-import random
 
-from networks.network_interface import NetworkInterface
+from networks.network_interface import JacobianInterface, NetworkInterface
 from networks.layers import DFC_layer, BP_layer
 
+# TODO: Put accuracy into Epoch: 001, Train loss ...
+# TODO: Remove double logging of Epoch: 001, Train loss ...
+# TODO: config.save (clean /outputs/)
+# TODO: fix config logging
 
-class SSAInterface(NetworkInterface):
-    def __init__(self, layer_class, activation_fn, config, name) -> None:
-        super().__init__(layer_class, activation_fn, config, name)
-
-        self._target_lr = config.target_lr
-        self._alpha_di = config.alpha_di
-
-    def backward(self, y):
-        self._set_targets(y)
-        self._non_dynamical_inversion()
-
-        for layer in self.layers:
-            layer.backward()
-
-    def _set_targets(self, y):
-        """MSE loss solution"""
-        self.targets = (1 - 2 * self._target_lr) * self.y_hat + 2 * self._target_lr * y
-        if random.random() < 0.005:
-            print("RANDOM:", self.y_hat.mean())
-
-    def _calculate_full_jacobian(self):
-        Js = []
-
-        activations_derivatives = [
-            layer.activation_derivative(layer.linear_activations)
-            for layer in self.layers
-        ]
-        bsz = self.layers[0].activations.shape[0]
-
-        output_sz = self.layers[-1].out_features
-
-        # Last layer
-        Js.append(
-            activations_derivatives[-1].view(bsz, output_sz, 1)
-            * torch.eye(output_sz).repeat(bsz, 1, 1)
-        )
-        # Rest of the layers
-        for i in range(len(self.layers) - 2, -1, -1):
-            J = activations_derivatives[i].unsqueeze(1) * torch.matmul(
-                Js[-1], self.layers[i + 1].weights
-            )
-            Js.append(J)
-
-        Js.reverse()
-
-        return torch.cat(Js, dim=2)
+# TODO: Is the non-dynamical inversion the same for a multiplicative rule?
+# TODO: Jacobian is now calculated with ReLU derivative, not mReLU
 
 
-class DFC_SSA_Mult_network(SSAInterface):
-    def __init__(self, config, name="DFC_SSA_Mult_network") -> None:
+class DFC_Mult_network(JacobianInterface):
+    def __init__(self, config, name="DFC_Mult_network") -> None:
         super().__init__(DFC_layer, nn.ReLU, config, name)
 
-        self._target_lr = config.target_lr
-        self._alpha_di = config.alpha_di
-
-        # TODO: Is the non-dynamical inversion the same for a multiplicative rule?
-        # TODO: Jacobian is now calculated with ReLU derivative, not mReLU
-
+    @torch.no_grad()
     def _non_dynamical_inversion(self):
-        J = self._calculate_full_jacobian()
+        J, _ = self._calculate_full_jacobian()
         J_T = J.transpose(1, 2)
 
         error = self.targets - self.y_hat
         error = error.unsqueeze(2)
 
         u = torch.linalg.solve(
-            torch.matmul(J, J_T) + self._alpha_di * torch.eye(J.shape[1]), error
+            torch.matmul(J, J_T) + self.alpha * torch.eye(J.shape[1]), error
         )
 
         psi = torch.matmul(J_T, u).squeeze(-1)
@@ -110,19 +64,19 @@ class DFC_SSA_Mult_network(SSAInterface):
             layer.r_prev = rs[i]
 
 
-class DFC_SSA_network(SSAInterface):
-    def __init__(self, config, name="DFC_SSA_network") -> None:
+class DFC_network(JacobianInterface):
+    def __init__(self, config, name="DFC_network") -> None:
         super().__init__(DFC_layer, nn.ReLU, config, name)
 
     def _non_dynamical_inversion(self):
-        J = self._calculate_full_jacobian()
+        J, _ = self._calculate_full_jacobian()
         J_T = J.transpose(1, 2)
 
         error = self.targets - self.y_hat
         error = error.unsqueeze(2)
 
         u = torch.linalg.solve(
-            torch.matmul(J, J_T) + self._alpha_di * torch.eye(J.shape[1]), error
+            torch.matmul(J, J_T) + self.alpha * torch.eye(J.shape[1]), error
         )
 
         delta_v = torch.matmul(J_T, u).squeeze(-1)
@@ -150,6 +104,63 @@ class DFC_SSA_network(SSAInterface):
             layer.r = r
             layer.r_ff = r_ff
             layer.r_prev = rs[i]
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
+
+        v_fb_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        u_current = torch.zeros((self.bzs, self.output_size))
+        u_int_current = torch.zeros((self.bzs, self.output_size))
+
+        for i, layer in enumerate(self.layers):
+            v_ff_current[i] = layer.linear_activations
+            v_current[i] = layer.linear_activations
+            r_current[i] = layer.activations
+
+        # Controller loop # TODO: while u(t) not converged
+        for _ in range(self.tmax - 1):
+            _, Jis = self._calculate_full_jacobian()
+            error = self.targets - r_current[-1]
+
+            # Proportional and integral (PI) control.
+            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
+            u_next = u_int_next + self.k_p * error
+
+            # Iterate over layers with control signal
+            for i, layer in enumerate(self.layers):
+                r_previous = r_current[i - 1] if i != 0 else self.input
+
+                # Forward
+                a = r_previous.mm(layer.weights.t())
+                a += layer.bias.unsqueeze(0).expand_as(a)
+                v_ff_current[i] = a
+
+                # Apical input (Ju)
+                v_fb_current[i] = torch.matmul(u_next.unsqueeze(1), Jis[i]).squeeze()
+
+                # Soma with apical
+                v_current[i] += (self.dt / self.time_constant_ratio) * (
+                    v_fb_current[i] + v_ff_current[i] - v_current[i]
+                )
+                r_current[i] = layer.activation_fn(v_current[i])
+                layer.linear_activations = v_current[i]
+                layer.activations = r_current[i]
+
+            u_int_current = u_int_next
+            u_current = u_next
+
+        # Steady-state values per layer
+        rs = [self.input]
+
+        for i, layer in enumerate(self.layers):
+            layer.r = r_current[i]
+            layer.r_ff = layer.activation_fn(v_ff_current[i])
+            layer.r_prev = rs[i]
+            rs.append(r_current[i])
 
 
 class BP_network(NetworkInterface):

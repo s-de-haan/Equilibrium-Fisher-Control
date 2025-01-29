@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
 
-from networks.networks import DFC_SSA_network, DFC_SSA_Mult_network, BP_network
+from networks.networks import *
 from src.datasets import MNIST
 from src.trainers import Trainer
 from src.utils import dotdict, set_device
+
 
 def main():
     # Training configuration
@@ -14,6 +15,7 @@ def main():
         "batch_size": 128,
         "epochs": 200,
         # "runs": 10,
+        "mode": "di",  # or "di"
         "num_workers": 1,
         "loss_fn": nn.MSELoss(),
         "optimizer": "Adam",
@@ -23,6 +25,10 @@ def main():
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
+        "dt_di": 0.02,  # dynamical inversion params
+        "time_constant_ratio": 0.2,
+        "tmax_di": 5,
+        "k_p": 2.0,
     }
     config = dotdict(config)
 
@@ -30,7 +36,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_SSA_Mult_network(config=config)
+    model = DFC_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()
