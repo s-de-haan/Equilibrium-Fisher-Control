@@ -122,8 +122,8 @@ class DFC_network(JacobianInterface):
             r_current[i] = layer.activations
 
         # Controller loop # TODO: while u(t) not converged
+        _, Jis = self._calculate_full_jacobian()
         for _ in range(self.tmax - 1):
-            _, Jis = self._calculate_full_jacobian()
             error = self.targets - r_current[-1]
 
             # Proportional and integral (PI) control.

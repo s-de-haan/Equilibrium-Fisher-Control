@@ -12,7 +12,7 @@ def main():
     config = {
         "layers": [784, 256, 256, 256, 10],
         "lr": 1e-3,
-        "batch_size": 128,
+        "batch_size": 256,
         "epochs": 200,
         # "runs": 10,
         "mode": "di",  # or "di"
@@ -20,14 +20,14 @@ def main():
         "loss_fn": nn.MSELoss(),
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cpu",
+        "device": "cuda:0",
         "output_dir": "./outputs",
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
         "dt_di": 0.02,  # dynamical inversion params
         "time_constant_ratio": 0.2,
-        "tmax_di": 5,
+        "tmax_di": 50,
         "k_p": 2.0,
     }
     config = dotdict(config)
