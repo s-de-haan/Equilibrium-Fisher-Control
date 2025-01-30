@@ -29,6 +29,7 @@ def main():
         "time_constant_ratio": 0.2,
         "tmax_di": 50,
         "k_p": 2.0,
+        "save": False,
     }
     config = dotdict(config)
 

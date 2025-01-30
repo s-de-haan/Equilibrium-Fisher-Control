@@ -23,33 +23,35 @@ class TrainerInterface:
         self.config = config
         self.device = config.device
         self.loss_fn = config.loss_fn
+        self.save = config.save
         self.callbacks = callbacks
 
         self._set_device(self.device)
         self.model.to(self.device)
 
+        self._prepare_training()
+
+        self.callback_handler.on_train_begin(training_config=self.config)
+
+        config_details = "\n".join([f" - {key}: {value}" for key, value in config.items()])
+        logger.info(msg=f"Training:\n{config_details}\n - model: {self.model.name}\n")
+
     def _set_device(self, device: str):
         self.device = torch.device(device)
         torch.set_default_device(self.device)
 
-    def _save_model(self, model, dir_path: str):
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
+    def _save_model(self):
+        if not os.path.exists(self.training_dir):
+            os.makedirs(self.training_dir)
 
-        torch.save(model.state_dict(), os.path.join(dir_path, "model.pt"))
+        torch.save(self.model.state_dict(), os.path.join(self.training_dir, "model.pt"))
 
-        with open(os.path.join(dir_path, "config.json"), "w") as fp:
+        with open(os.path.join(self.training_dir, "config.json"), "w") as fp:
             json.dump(self.config, fp)
 
         self.callback_handler.on_save(self.config)
 
     def _setup_logger(self):
-        # logging.basicConfig(
-        #     filename=os.path.join(self.training_dir, "training.log"),
-        #     level=logging.INFO,
-        #     format="%(message)s",
-        # )
-
         # Create a logger
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
@@ -165,16 +167,6 @@ class Trainer(TrainerInterface):
         self.test_loader = test_loader
 
     def train(self) -> None:
-        self._prepare_training()
-        self.callback_handler.on_train_begin(training_config=self.config)
-
-        logger.info(
-            msg=f"Training:\n - epochs: {self.config.epochs}\n - batch_size: {self.config.batch_size}\n - optimizer: {self.config.optimizer}\n - scheduler: {self.config.scheduler}\n - device: {self.config.device}\n - output_dir: {self.config.output_dir}\n - seed: {self.config.seed}\n - encoder_layers: {self.config.encoder_layers}\n - decoder_layers: {self.config.decoder_layers}\n - learning_rate: {self.config.lr}\n - gamma: {self.config.gamma}\n - patience: {self.config.patience}\n - num_workers: {self.config.num_workers}\n - training_dir: {self.training_dir}\n - model: {self.model.name}\n"
-        )
-
-        best_train_loss = 1e10
-        best_test_loss = 1e10
-
         self.model.zero_grad()
 
         for epoch in range(1, self.config.epochs + 1):
@@ -191,8 +183,9 @@ class Trainer(TrainerInterface):
             metrics.epoch_train_loss = epoch_train_loss
 
             if self.test_loader is not None:
-                epoch_test_loss = self._test_step(epoch)
+                epoch_test_loss, accuracy = self._test_step(epoch)
                 metrics.epoch_test_loss = epoch_test_loss
+                metrics.accuracy = accuracy
 
             self.callback_handler.on_epoch_end(training_config=self.config)
             self.callback_handler.on_log(
@@ -202,9 +195,9 @@ class Trainer(TrainerInterface):
                 epoch=epoch,
             )
 
-        logger.info(
-            f"\nBest train loss: {best_train_loss}, Best test loss: {best_test_loss}"
-        )
+        if self.save:
+            self._save_model()
+
 
     def _train_step(self, epoch: int):
         self.callback_handler.on_train_step_begin(
@@ -270,9 +263,8 @@ class Trainer(TrainerInterface):
 
         epoch_loss /= len(self.test_loader)
         accuracy = 100 * correct / total
-        print(f"\nAccuracy: {accuracy}")
 
-        return epoch_loss
+        return epoch_loss, accuracy
 
 
 class TrainerCL(TrainerInterface):
@@ -282,7 +274,6 @@ class TrainerCL(TrainerInterface):
         self.task_results = []
 
     def train(self):
-        self._prepare_training()
         self.callback_handler.on_train_begin(training_config=self.config)
 
         for task_id, (train_loader, _) in enumerate(self.tasks_dataloaders):
@@ -317,6 +308,10 @@ class TrainerCL(TrainerInterface):
             self.callback_handler.on_task_end(
                 training_config=self.config, task_id=task_id + 1
             )
+        
+        if self.save:
+            self._save_model()
+
 
     def _train_step(self, batch):
         self.model.train()

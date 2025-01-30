@@ -85,27 +85,21 @@ class JacobianInterface(NetworkInterface):
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):
-        Js = []
+        Js = [None] * len(self.layers)
+        output_size = self.layer_sizes[-1]
 
         activations_derivatives = [
             layer.activation_derivative(layer.linear_activations)
             for layer in self.layers
         ]
 
-        output_sz = self.layers[-1].out_features
-
         # Last layer
-        Js.append(
-            activations_derivatives[-1].view(self.bzs, output_sz, 1)
-            * torch.eye(output_sz).repeat(self.bzs, 1, 1)
-        )
+        Js[-1] = activations_derivatives[-1].view(self.bzs, output_size, 1) * torch.eye(output_size)
+
         # Rest of the layers
         for i in range(len(self.layers) - 2, -1, -1):
-            J = activations_derivatives[i].unsqueeze(1) * torch.matmul(
-                Js[-1], self.layers[i + 1].weights
+            Js[i] = activations_derivatives[i].unsqueeze(1) * torch.matmul(
+                Js[i+1], self.layers[i + 1].weights
             )
-            Js.append(J)
-
-        Js.reverse()
 
         return torch.cat(Js, dim=2), Js

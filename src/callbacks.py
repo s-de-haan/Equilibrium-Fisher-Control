@@ -167,7 +167,7 @@ class CallbackHandler:
 
     def call_event(self, event, training_config, **kwargs):
         for callback in self.callbacks:
-            result = getattr(callback, event)(
+            getattr(callback, event)(
                 training_config,
                 model=self.model,
                 **kwargs,
@@ -182,18 +182,15 @@ class MetricConsolePrinterCallback(TrainingCallback):
     def __init__(self):
         self.logger = logging.getLogger(__name__)
 
-        console = logging.StreamHandler()
-        self.logger.addHandler(console)
-        self.logger.setLevel(logging.INFO)
-
     def on_log(self, training_config, logs, **kwargs):
         epoch = kwargs.pop("epoch", None)
         if logger is not None:
             epoch_train_loss = logs.epoch_train_loss
             epoch_test_loss = logs.epoch_test_loss
+            accuracy = logs.accuracy
             if epoch_test_loss is not None:
                 self.logger.info(
-                    f"\t\t\t\tEpoch: {epoch:03}, Train loss: {np.round(epoch_train_loss, 4):.4f} & test loss: {np.round(epoch_test_loss, 4):.4f}"
+                    f"\t\t\t\tEpoch: {epoch:03}, Train loss: {np.round(epoch_train_loss, 4):.4f} & test loss: {np.round(epoch_test_loss, 4):.4f} & accuracy: {np.round(accuracy,2):.2f}"
                 )
             else:
                 self.logger.info(
@@ -217,7 +214,7 @@ class ProgressBarCallback(TrainingCallback):
             self.train_progress_bar = tqdm(
                 total=len(train_loader),
                 unit="batch",
-                desc=f"Training of epoch {epoch}/{training_config.epochs}",
+                desc=f"Training epoch {epoch:03}/{training_config.epochs}",
             )
 
     def on_test_step_begin(self, training_config, **kwargs):
@@ -227,7 +224,7 @@ class ProgressBarCallback(TrainingCallback):
             self.test_progress_bar = tqdm(
                 total=len(test_loader),
                 unit="batch",
-                desc=f"test of epoch {epoch}/{training_config.epochs}",
+                desc=f"Testing  epoch {epoch:03}/{training_config.epochs}",
             )
 
     def on_train_step_end(self, training_config, **kwargs):
