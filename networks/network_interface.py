@@ -105,3 +105,6 @@ class JacobianInterface(NetworkInterface):
             )
 
         return torch.cat(Js, dim=2), Js
+    
+    def _broyden(self): #TODO: implementation of Broyden's method for Jacobian updates.
+        pass
