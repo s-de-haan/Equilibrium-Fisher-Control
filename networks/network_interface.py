@@ -1,14 +1,11 @@
 import torch
 import torch.nn as nn
 
-from networks.layer_interface import Linear
-
-
 class NetworkInterface(nn.Module):
-    def __init__(self, layer_class, activation_fn, config, name):
+    def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
 
-        self.create_network(layer_class, activation_fn, config)
+        self.create_network(layer_class, activation_fn, out_activation_fn, config)
         self.name = name
 
     @property
@@ -30,7 +27,7 @@ class NetworkInterface(nn.Module):
         self.y_hat = x
         return x
 
-    def create_network(self, layer_class, activation_fn, config):
+    def create_network(self, layer_class, activation_fn, out_activation_fn, config):
         _layers = config.layers
 
         self.layers = nn.ModuleList()
@@ -46,14 +43,14 @@ class NetworkInterface(nn.Module):
             layer_class(
                 _layers[-2],
                 _layers[-1],
-                activation_fn=Linear(),
+                activation_fn=out_activation_fn(),
             )
         )
 
 
 class JacobianInterface(NetworkInterface):
-    def __init__(self, layer_class, activation_fn, config, name) -> None:
-        super().__init__(layer_class, activation_fn, config, name)
+    def __init__(self, layer_class, activation_fn, out_activation_fn, config, name) -> None:
+        super().__init__(layer_class, activation_fn, out_activation_fn, config, name)
 
         if config.mode == "ndi":
             self._inversion = self._non_dynamical_inversion

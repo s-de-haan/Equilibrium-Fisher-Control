@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 
-from networks.networks import *
+from networks.EWC_network import DFC_Mult_network
+from networks.DFC_network import DFC_network
 from src.datasets import MNIST
 from src.trainers import Trainer
 from src.utils import dotdict, set_device
 
+# TODO config manager from Xander's project
 
 def main():
     # Training configuration

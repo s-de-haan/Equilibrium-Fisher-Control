@@ -19,7 +19,6 @@ class DFC_layer(LayerInterface):
         self._weights.grad = weights_grad
         self._bias.grad = bias_grad
 
-
 class BP_layer(LayerInterface):
     def __init__(
         self, in_features, out_features, activation_fn, name="BP_layer"
