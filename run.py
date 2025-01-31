@@ -20,15 +20,16 @@ def main():
         "loss_fn": nn.MSELoss(),
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:0",
+        "device": "cuda:1",
         "output_dir": "./outputs",
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
         "dt_di": 0.02,  # dynamical inversion params
         "time_constant_ratio": 0.2,
-        "tmax_di": 50,
+        "tmax_di": 500,
         "k_p": 2.0,
+        "eps": 1e-4, # 1e-4 really fast
         "save": False,
     }
     config = dotdict(config)

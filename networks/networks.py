@@ -153,6 +153,7 @@ class DFC_network(JacobianInterface):
 
     @torch.no_grad()
     def _dynamical_inversion(self):
+        # Setup
         layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
 
         v_fb_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
@@ -167,27 +168,35 @@ class DFC_network(JacobianInterface):
             v_current[i] = layer.linear_activations
             r_current[i] = layer.activations
 
-        # Controller loop # TODO: while u(t) not converged, 
-        # something like 0 < norm of all samples, and > eps
-        for _ in range(self.tmax - 1):
-            _, Jis = self._calculate_full_jacobian()
-            error = self.targets - r_current[-1]
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        _, Js = self._calculate_full_jacobian()
 
+        # Simulate tmax timesteps
+        for _ in range(self.tmax - 1):
+            error = self.targets - r_current[-1]
+            
             # Proportional and integral (PI) control.
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
             u_next = u_int_next + self.k_p * error
 
+            # Compute convergence check
+            u_diff = torch.norm(u_next - u_current, dim=1)
+            converged_mask |= u_diff < self.eps
+
+            # Stop if converged
+            if converged_mask.all():
+                break
+            
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
                 r_previous = r_current[i - 1] if i != 0 else self.input
 
                 # Forward
-                a = r_previous.mm(layer.weights.t())
-                a += layer.bias.unsqueeze(0).expand_as(a)
+                a = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 v_ff_current[i] = a
 
                 # Apical input (Ju)
-                v_fb_current[i] = torch.bmm(u_next.unsqueeze(1), Jis[i]).squeeze()
+                v_fb_current[i] = torch.bmm((u_next).unsqueeze(1), Js[i]).squeeze()
 
                 # Soma with apical
                 v_current[i] += (self.dt / self.time_constant_ratio) * (

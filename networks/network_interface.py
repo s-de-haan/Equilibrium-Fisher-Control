@@ -64,9 +64,11 @@ class JacobianInterface(NetworkInterface):
             self.time_constant_ratio = config.time_constant_ratio
             self.k_p = config.k_p
             self.tmax = config.tmax_di
+            self.eps = config.eps
 
             assert self.k_p > 0
             assert self.apical_time_constant > 0
+            assert self.eps > 0
 
         self.target_lr = config.target_lr
         self.alpha = config.alpha_di
@@ -79,7 +81,7 @@ class JacobianInterface(NetworkInterface):
             layer.backward()
 
     def _set_targets(self, y):
-        """MSE loss solution"""
+        """ MSE loss solution """
         self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
         self.bzs = self.targets.shape[0]
         self.output_size = self.targets.shape[1]
