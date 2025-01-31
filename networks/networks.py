@@ -169,7 +169,6 @@ class DFC_network(JacobianInterface):
             r_current[i] = layer.activations
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-        _, Js = self._calculate_full_jacobian()
 
         # Simulate tmax timesteps
         for _ in range(self.tmax - 1):
@@ -186,6 +185,8 @@ class DFC_network(JacobianInterface):
             # Stop if converged
             if converged_mask.all():
                 break
+
+            _, Js = self._calculate_full_jacobian()
             
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
