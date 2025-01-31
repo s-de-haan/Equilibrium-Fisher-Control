@@ -126,3 +126,16 @@ class JacobianInterface(NetworkInterface):
 def relu(x):
     #numpy based one TODO: horrible implementation, fix this.
     return torch.nn.ReLU()(torch.tensor(x)).cpu().numpy()
+
+
+'''
+Notes about work in progress:
+Broyden's method is a good candidate for updating the Jacobian matrix.
+Steps to be followed next:
+- Compare single layer calculations with the Broyden's method.
+- For all layers, just make the batch size 1 and compare the results.
+- If everyting is fine, then implement the Broyden's method for the torch tensors (for gpu) and test it.
+
+Current status:
+Some random functions and lines are added to the code. They are not working properly.
+'''
