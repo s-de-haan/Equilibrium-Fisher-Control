@@ -106,5 +106,23 @@ class JacobianInterface(NetworkInterface):
 
         return torch.cat(Js, dim=2), Js
     
-    def _broyden(self): #TODO: implementation of Broyden's method for Jacobian updates.
-        pass
+    def _broyden(self, Js_init=None): #TODO: implementation of Broyden's method for Jacobian updates.
+
+        Js = [None] * len(self.layers)
+        output_size = self.layer_sizes[-1]
+
+        from scipy import optimize
+
+        func = relu
+
+        for i in range(len(self.layers) - 1, -1, -1):
+            sol = optimize.broyden1(func, Js_init[i].cpu().numpy(), f_tol=1e-14, f_rtol=1e-14, verbose=True)
+            Js[i] = torch.from_numpy(sol.copy())
+
+        # sol = optimize.broyden1(func, Js_init, f_tol=1e-14, f_rtol=1e-14, verbose=True)
+        return torch.cat(Js, dim=2), Js
+    
+
+def relu(x):
+    #numpy based one TODO: horrible implementation, fix this.
+    return torch.nn.ReLU()(torch.tensor(x)).cpu().numpy()

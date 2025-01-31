@@ -170,6 +170,9 @@ class DFC_network(JacobianInterface):
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
+        _, Js = self._calculate_full_jacobian()
+
+
         # Simulate tmax timesteps
         for _ in range(self.tmax - 1):
             error = self.targets - r_current[-1]
@@ -185,8 +188,9 @@ class DFC_network(JacobianInterface):
             # Stop if converged
             if converged_mask.all():
                 break
-
-            _, Js = self._calculate_full_jacobian()
+                
+            #TODO: Implement Broyden's method
+            _, Js = self._broyden(Js_init=Js)
             
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
