@@ -40,7 +40,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_network(config=config)
+    model = DFC_Mult_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

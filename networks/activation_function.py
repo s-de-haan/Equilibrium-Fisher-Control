@@ -41,7 +41,7 @@ class Linear(ActivationFunction):
 class mLinear(ActivationFunction):
     def __init__(self):
         super().__init__()
-        self.m = 1
+        self.m = torch.tensor(1)
 
     def set_m(self, m):
         self.m = m
@@ -56,13 +56,13 @@ class mLinear(ActivationFunction):
 class mReLU(ActivationFunction):
     def __init__(self):
         super().__init__()
-        self.m = 1
+        self.m = torch.tensor(1)
 
     def set_m(self, m):
         self.m = m
 
     def forward(self, x):
-        return x.clamp(min=0) * self.m
+        return x.clamp(min=0)
 
     def derivative(self, x):
         grad = torch.ones_like(x) * self.m

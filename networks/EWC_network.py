@@ -53,7 +53,6 @@ class DFC_Mult_network(JacobianInterface):
     def _dynamical_inversion(self):
         layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
 
-        psi_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
         v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
         v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
         r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
@@ -67,7 +66,7 @@ class DFC_Mult_network(JacobianInterface):
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
-        for _ in range(self.tmax - 1):
+        for t in range(self.tmax - 1):
             # Stop if converged
             if converged_mask.all():
                 break
@@ -89,20 +88,20 @@ class DFC_Mult_network(JacobianInterface):
 
                 # Basal and apical
                 v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                psi_current[i] = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
+                e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
+                if i == len(self.layers) - 1: # Correct for linear output layer
+                    e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
 
                 # Soma with apical
                 tau = self.dt / self.time_constant_ratio
-                v_current[i] += tau * (v_ff_current[i] - v_current[i])
+                v_current[i] += tau * (e_psi * v_ff_current[i] - v_current[i])
 
-                e_psi = torch.exp(torch.abs(psi_current[i]))
-                if i == len(self.layers) - 1:
-                    e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
                 layer.activation_fn.set_m(e_psi)
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.linear_activations = v_current[i]
                 layer.activations = r_current[i]
+                print(layer.activations)
 
             u_int_current = u_int_next
             u_current = u_next
