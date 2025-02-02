@@ -46,8 +46,11 @@ class mLinear(ActivationFunction):
     def set_m(self, m):
         self.m = m
 
+    def reset_m(self):
+        self.m = torch.tensor(1)
+
     def forward(self, x):
-        return x * self.m
+        return x
 
     def derivative(self, x):
         return torch.ones_like(x) * self.m
@@ -60,6 +63,9 @@ class mReLU(ActivationFunction):
 
     def set_m(self, m):
         self.m = m
+
+    def reset_m(self):
+        self.m = torch.tensor(1)
 
     def forward(self, x):
         return x.clamp(min=0)
