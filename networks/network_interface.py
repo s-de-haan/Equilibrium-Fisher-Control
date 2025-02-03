@@ -6,6 +6,7 @@ class NetworkInterface(nn.Module):
         super().__init__()
 
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
+        self.loss_fn = config.loss_fn
         self.name = name
 
     @property
@@ -22,6 +23,7 @@ class NetworkInterface(nn.Module):
 
     def forward(self, x):
         self.input = x
+        self.bzs = x.shape[0]
         for layer in self.layers:
             x = layer(x)
         self.y_hat = x
@@ -47,6 +49,12 @@ class NetworkInterface(nn.Module):
             )
         )
 
+    def calculate_loss(self, y, y_hat):
+        self.loss = self.loss_fn(y, y_hat)
+        return self.loss
+
+    def complete_task(self):
+        pass
 
 class JacobianInterface(NetworkInterface):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name) -> None:
@@ -80,7 +88,6 @@ class JacobianInterface(NetworkInterface):
     def _set_targets(self, y):
         """ MSE loss solution """
         self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
-        self.bzs = self.targets.shape[0]
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):

@@ -1,122 +1,88 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from copy import deepcopy
 
-from networks.network_interface import JacobianInterface
-from networks.layers import DFC_layer
-from networks.activation_function import *
+from networks.network_interface import NetworkInterface
+from networks.layers import BP_layer
+from networks.activation_function import ReLU, Linear
 
+class EWC_network(NetworkInterface):
+    def __init__(self, config, name="EWC_network"):
+        super().__init__(BP_layer, ReLU, Linear, config, name)
+        self.importance = config.importance_ewc
+        self._means = {}
+        self._precision_matrices = {}
+        self._first_task = True
+        
+    def _calculate_batch_fisher(self):
+        """Calculate Fisher Information for a single batch."""
+        precision_matrices = {}
+        for n, p in self.named_parameters():
+            if p.requires_grad:
+                precision_matrices[n] = torch.zeros_like(p)
 
-class DFC_Mult_network(JacobianInterface):
-    def __init__(self, config, name="DFC_Mult_network") -> None:
-        super().__init__(DFC_layer, mReLU, mLinear, config, name)
+        self.eval()
+        output = self(self.input)
+        label = output.argmax(1)
+        loss = F.nll_loss(F.log_softmax(output, dim=1), label)
+        loss.backward(retain_graph=True)
+        
+        for n, p in self.named_parameters():
+            if p.requires_grad and p.grad is not None:
+                precision_matrices[n].data += (p.grad.data ** 2) / self.bzs
 
-    @torch.no_grad()
-    def _non_dynamical_inversion(self):
-        J, _ = self._calculate_full_jacobian()
-        J_T = J.transpose(1, 2)
+        return precision_matrices
 
-        error = self.targets - self.y_hat
-        error = error.unsqueeze(2)
+    def update_fisher(self):
+        """Update Fisher Information Matrix using current batch."""
+        batch_fisher = self._calculate_batch_fisher()  # Use only input data
+        
+        if not self._precision_matrices:  # Initialize if empty
+            self._precision_matrices = batch_fisher
+            return
+        
+        # Running average of Fisher Information
+        for n in self._precision_matrices.keys():
+            self._precision_matrices[n] = (
+                0.95 * self._precision_matrices[n] + 
+                0.05 * batch_fisher[n]
+            )
 
-        u = torch.linalg.solve(
-            torch.bmm(J, J_T) + self.alpha * torch.eye(J.shape[1]), error
-        )
+    def store_task_parameters(self):
+        """Store current parameters after task completion."""
+        self._means = {}
+        for n, p in self.named_parameters():
+            if p.requires_grad:
+                self._means[n] = p.data.clone()
 
-        psi = torch.bmm(J_T, u).squeeze(-1)
-        psis = torch.split(psi, self.layer_sizes, dim=1)
+    def ewc_loss(self):
+        """Calculate EWC penalty term."""
+        loss = 0
+        if not self._first_task and self._means:
+            for n, p in self.named_parameters():
+                if p.requires_grad and n in self._means:
+                    _loss = (
+                        self._precision_matrices[n] * 
+                        (p - self._means[n]) ** 2
+                    ).sum()
+                    loss += _loss
+        return self.importance * loss
 
-        rs = [self.input]
+    def backward(self, y):
+        # Update Fisher Information Matrix
+        if not self._first_task:
+            self.update_fisher()
 
-        for i, layer in enumerate(self.layers):
-            v_ff = torch.mm(rs[i], layer.weights.t())
-            v_ff += layer.bias.unsqueeze(0).expand_as(v_ff)
-            v = v_ff
-            r_ff = layer.activation_fn(v_ff)
+        # Calculate gradients including EWC penalty
+        loss = self.loss_fn(self.y_hat, y)
+        if not self._first_task:
+            loss += self.ewc_loss()
+        
+        loss.backward()
 
-            e_psi = torch.exp(torch.abs(psis[i])) 
-            if i == len(self.layers) - 1:
-                e_psi = torch.where(r_ff > 0, e_psi, 1 / e_psi)
-
-            layer.activation_fn.set_m(e_psi)
-            r = layer.activation_fn(v)
-            rs.append(r)
-
-            layer.v_ff = v_ff
-            layer.v = v
-            layer.e_psi = e_psi
-
-            layer.r = r
-            layer.r_ff = r_ff
-            layer.r_prev = rs[i]
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
-
-        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        u_current = torch.zeros((self.bzs, self.output_size))
-        u_int_current = torch.zeros((self.bzs, self.output_size))
-
-        for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.linear_activations
-            v_current[i] = layer.linear_activations
-            r_current[i] = layer.activations
-            layer.activation_fn.reset_m()
-
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-
-        for t in range(self.tmax - 1):
-            # Stop if converged
-            if converged_mask.all():
-                break
-
-            error = self.targets - r_current[-1]
-            
-            # Proportional and integral (PI) control.
-            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
-            u_next = u_int_next + self.k_p * error
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-
-            _, Js = self._calculate_full_jacobian()
-
-            # Iterate over layers with control signal
-            for i, layer in enumerate(self.layers):
-                r_previous = r_current[i - 1] if i != 0 else self.input
-
-                # Basal and apical
-                v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
-                if i == len(self.layers) - 1: # Correct for linear output layer
-                    e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
-
-                # Soma with apical
-                tau = self.dt / self.time_constant_ratio
-                v_current[i] += tau * (e_psi * v_ff_current[i] - v_current[i])
-
-                layer.activation_fn.set_m(e_psi)
-                r_current[i] = layer.activation_fn(v_current[i])
-
-                layer.linear_activations = v_ff_current[i]
-                layer.activations = r_current[i]
-
-            u_int_current = u_int_next
-            u_current = u_next
-
-        # Steady-state values per layer
-        rs = [self.input]
-
-        for i, layer in enumerate(self.layers):
-            layer.r = r_current[i]
-            layer.r_ff = layer.activation_fn(v_ff_current[i])
-            layer.r_prev = rs[i]
-            rs.append(r_current[i])
-
-
-
-
-
-
+    def complete_task(self):
+        """Call this at the end of each task."""
+        if self._first_task:
+            self._first_task = False
+        self.store_task_parameters()

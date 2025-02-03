@@ -22,7 +22,6 @@ class TrainerInterface:
         self.model = model
         self.config = config
         self.device = config.device
-        self.loss_fn = config.loss_fn
         self.save = config.save
         self.callbacks = callbacks
 
@@ -148,26 +147,90 @@ class TrainerInterface:
         self.callback_handler.add_callback(ProgressBarCallback())
         self.callback_handler.add_callback(MetricConsolePrinterCallback())
 
-    def train_step(self, batch):
-        raise NotImplementedError("train_step must be implemented in a subclass.")
-
-    def test_step(self, batch):
+    def test_step(self, epoch):
         raise NotImplementedError("test_step must be implemented in a subclass.")
 
     def train(self):
         raise NotImplementedError("train must be implemented in a subclass.")
 
+    def _train_step(self, epoch: int):
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        self.model.train()
+
+        epoch_loss = 0
+
+        for X, y in self.train_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            y_hat = self.model(X)
+
+            loss = self.model.calculate_loss(y_hat, y)
+
+            self.optimizer.zero_grad()
+            self.model.backward(y)
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in train loss")
+
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.train_loader)
+
+        return epoch_loss
+    
+    @torch.no_grad()
+    def _test_step(self, epoch):
+        self.callback_handler.on_test_step_begin(
+            training_config=self.config,
+            test_loader=self.test_loader,
+            epoch=epoch,
+        )
+
+        epoch_loss = 0
+        total = 0
+        correct = 0
+
+        for X, y in self.test_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            y_hat = self.model(X)
+
+            loss = self.model.loss_fn(y_hat, y)
+
+            epoch_loss += loss.item()
+            total += y.size(0)
+            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in test loss")
+            
+            self.callback_handler.on_test_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.test_loader)
+        accuracy = 100 * correct / total
+
+        return epoch_loss, accuracy
+    
 
 class Trainer(TrainerInterface):
-    def __init__(
-        self, model, train_loader, test_loader, config, callbacks=None
-    ) -> None:
+    def __init__(self, model, train_loader, test_loader, config, callbacks=None):
         super().__init__(model, config, callbacks)
         self.train_loader = train_loader
         self.test_loader = test_loader
 
-    def train(self) -> None:
-        self.model.zero_grad()
+    def train(self):
+        self.callback_handler.on_train_begin(training_config=self.config)
+        metrics = dotdict()
 
         for epoch in range(1, self.config.epochs + 1):
             self.callback_handler.on_epoch_begin(
@@ -176,8 +239,6 @@ class Trainer(TrainerInterface):
                 train_loader=self.train_loader,
                 test_loader=self.test_loader,
             )
-
-            metrics = dotdict()
 
             epoch_train_loss = self._train_step(epoch)
             metrics.epoch_train_loss = epoch_train_loss
@@ -199,108 +260,49 @@ class Trainer(TrainerInterface):
             self._save_model()
 
 
-    def _train_step(self, epoch: int):
-        self.callback_handler.on_train_step_begin(
-            training_config=self.config,
-            train_loader=self.train_loader,
-            epoch=epoch,
-        )
-
-        self.model.train()
-
-        epoch_loss = 0
-
-        for X, y in self.train_loader:
-            X = X.to(self.device)
-            y = y.to(self.device)
-
-            y_hat = self.model(X)
-
-            loss = self.loss_fn(y_hat, y)
-
-            self.optimizer.zero_grad()
-            self.model.backward(y)
-            self.optimizer.step()
-
-            epoch_loss += loss.item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in train loss")
-
-            self.callback_handler.on_train_step_end(training_config=self.config)
-
-        epoch_loss /= len(self.train_loader)
-
-        return epoch_loss
-
-    @torch.no_grad()
-    def _test_step(self, epoch: int):
-        self.callback_handler.on_test_step_begin(
-            training_config=self.config,
-            test_loader=self.test_loader,
-            epoch=epoch,
-        )
-
-        epoch_loss = 0
-        total = 0
-        correct = 0
-
-        for X, y in self.test_loader:
-            X = X.to(self.device)
-            y = y.to(self.device)
-            with torch.no_grad():
-                y_hat = self.model(X)
-
-            loss = self.loss_fn(y_hat, y)
-
-            epoch_loss += loss.item()
-            total += y.size(0)
-            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in test loss")
-            self.callback_handler.on_test_step_end(training_config=self.config)
-
-        epoch_loss /= len(self.test_loader)
-        accuracy = 100 * correct / total
-
-        return epoch_loss, accuracy
-
-
 class TrainerCL(TrainerInterface):
     def __init__(self, model, tasks_dataloaders, config, callbacks=None):
         super().__init__(model, config, callbacks)
         self.tasks_dataloaders = tasks_dataloaders
-        self.task_results = []
 
     def train(self):
         self.callback_handler.on_train_begin(training_config=self.config)
+        metrics = dotdict()
 
-        for task_id, (train_loader, _) in enumerate(self.tasks_dataloaders):
+        for task_id, (train_loader, test_loader) in enumerate(self.tasks_dataloaders):
             logger.info(f"Starting Task {task_id + 1}/{len(self.tasks_dataloaders)}")
+
+            self.train_loader = train_loader
+            self.test_loader = test_loader
+            
             self.callback_handler.on_task_begin(
                 training_config=self.config, task_id=task_id + 1
             )
 
-            for epoch in range(self.config.epochs):
+            for epoch in range(1, self.config.epochs + 1):
                 self.callback_handler.on_epoch_begin(
-                    training_config=self.config, epoch=epoch + 1
+                    training_config=self.config, 
+                    epoch=epoch, 
+                    train_loader=self.train_loader, 
+                    test_loader=self.test_loader
                 )
-                train_loss = 0.0
 
-                self.callback_handler.on_train_step_begin(
-                    training_config=self.config, train_loader=train_loader, epoch=epoch
-                )
-                for batch in train_loader:
-                    loss = self._train_step(batch)
-                    train_loss += loss
+                epoch_train_loss = self._train_step(epoch)
+                metrics.epoch_train_loss = epoch_train_loss
 
-                train_loss /= len(train_loader)
-                logger.info(
-                    f"Task {task_id + 1}, Epoch {epoch + 1}/{self.config.epochs}, Loss: {train_loss:.4f}"
-                )
-                self.callback_handler.on_epoch_end(
-                    training_config=self.config, epoch=epoch + 1, loss=train_loss
+                if self.test_loader is not None:
+                    epoch_test_loss, accuracy = self._test_step(epoch)
+                    metrics.epoch_test_loss = epoch_test_loss
+                    metrics.accuracy = accuracy
+
+                self.model.complete_task()
+
+                self.callback_handler.on_epoch_end(training_config=self.config)
+                self.callback_handler.on_log(
+                    self.config,
+                    metrics,
+                    logger=logger,
+                    epoch=epoch,
                 )
 
             # Test on all seen tasks
@@ -312,45 +314,10 @@ class TrainerCL(TrainerInterface):
         if self.save:
             self._save_model()
 
-
-    def _train_step(self, batch):
-        self.model.train()
-        inputs, targets = batch
-        inputs, targets = inputs.to(self.device), targets.to(self.device)
-
-        self.optimizer.zero_grad()
-        outputs = self.model(inputs)
-        loss = self.loss_fn(outputs, targets)
-        loss.backward()
-        self.optimizer.step()
-
-        self.callback_handler.on_train_step_end(training_config=self.config)
-
-        return loss.item()
-
-    def _test_step(self, batch):
-        self.model.eval()
-        inputs, targets = batch
-        inputs, targets = inputs.to(self.device), targets.to(self.device)
-
-        with torch.no_grad():
-            outputs = self.model(inputs)
-            loss = self.loss_fn(outputs, targets)
-            accuracy = (
-                (torch.argmax(outputs, dim=1) == torch.argmax(targets, dim=1))
-                .float()
-                .mean()
-                .item()
-            )
-
-        return loss.item(), accuracy
-
     def _test_seen_tasks(self, current_task_id):
-        results = {}
         for task_id in range(current_task_id + 1):
             logger.info(f"Testing on Task {task_id + 1}/{current_task_id + 1}")
-            test_loader = self.tasks_dataloaders[task_id][1]
-            self.test_loader = test_loader
+            self.test_loader = self.tasks_dataloaders[task_id][1]
 
             self.callback_handler.on_test_step_begin(
                 training_config=self.config,
@@ -358,20 +325,9 @@ class TrainerCL(TrainerInterface):
                 epoch=task_id,
             )
 
-            test_loss, test_acc = 0.0, 0.0
-            for batch in test_loader:
-                loss, acc = self._test_step(batch)
-                test_loss += loss
-                test_acc += acc
+            epoch_test_loss, accuracy = self._test_step(0)
 
-                self.callback_handler.on_test_step_end(training_config=self.config)
-
-            test_loss /= len(test_loader)
-            test_acc /= len(test_loader)
+            
             logger.info(
-                f"Task {task_id + 1} - Loss: {test_loss:.4f}, Accuracy: {test_acc:.4f}"
+                f"Task {task_id + 1} - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
             )
-
-            results[f"Task {task_id + 1}"] = {"loss": test_loss, "accuracy": test_acc}
-
-        self.task_results.append(deepcopy(results))

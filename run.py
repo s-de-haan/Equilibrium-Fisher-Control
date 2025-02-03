@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 
-from networks.EWC_network import DFC_Mult_network
-from networks.DFC_network import DFC_network
+from networks.BP_network import *
+from networks.EWC_network import *
+from networks.DFC_network import *
 from src.datasets import MNIST
 from src.trainers import Trainer
-from src.utils import dotdict, set_device
+from src.utils import dotdict
 
 # TODO config manager from Xander's project
 
@@ -40,7 +41,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_Mult_network(config=config)
+    model = BP_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

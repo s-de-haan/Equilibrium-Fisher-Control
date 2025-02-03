@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
 
-from networks.networks import *
+from networks.BP_network import *
+from networks.EWC_network import *
+from networks.DFC_network import *
 from src.datasets import SplitMNIST
 from src.trainers import TrainerCL
 from src.utils import dotdict
@@ -31,6 +33,7 @@ def main():
         "k_p": 2.0,
         "eps": 1e-4,
         "save": False,
+        "importance_ewc": 1.0, # ewc params
     }
     config = dotdict(config)
 
@@ -38,7 +41,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = DFC_network(config=config)
+    model = BP_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

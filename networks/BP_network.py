@@ -7,3 +7,6 @@ from networks.activation_function import *
 class BP_network(NetworkInterface):
     def __init__(self, config, name="BP_network") -> None:
         super().__init__(BP_layer, ReLU, Linear, config, name)
+
+    def backward(self, y):
+        self.loss.backward()
