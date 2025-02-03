@@ -27,7 +27,7 @@ def main():
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
-        "dt_di": 0.02,  # dynamical inversion params
+        "dt_di": 0.006,  # dynamical inversion params
         "time_constant_ratio": 0.2,
         "tmax_di": 500,
         "k_p": 2.0,
