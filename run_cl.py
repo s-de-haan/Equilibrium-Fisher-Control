@@ -14,15 +14,15 @@ def main():
     config = {
         "layers": [784, 256, 256, 256, 2],
         "lr": 1e-3,
-        "batch_size": 128,
-        "epochs": 100,
+        "batch_size": 256,
+        "epochs": 10,
         # "runs": 10,
         "mode": "ndi",  # or "di"
         "num_workers": 1,
         "loss_fn": nn.MSELoss(),
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cpu",
+        "device": "cuda:1",
         "output_dir": "./outputs",
         "seed": 1337,
         "target_lr": 1e-2,
@@ -41,7 +41,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = BP_network(config=config)
+    model = EWC_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

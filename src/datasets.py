@@ -3,12 +3,7 @@ import numpy as np
 import torch
 
 from torchvision import transforms
-from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, TensorDataset
-
-import torch
-from torch.utils.data import DataLoader, TensorDataset
-from torchvision import transforms, datasets
+from torch.utils.data import DataLoader, TensorDataset, Subset
 
 
 class MNIST:
@@ -104,31 +99,56 @@ class SplitMNIST:
         n_classes = 2
         return torch.eye(n_classes)[targets]
 
-    def get_task_data(self, dataset, classes):
-        """Filter dataset by specific classes."""
-        indices = [i for i, target in enumerate(dataset.targets) if target in classes]
-        data = dataset.data[indices].view(-1, 28 * 28)
-        targets = dataset.targets[indices]
-        return data, targets
+    def _filter_dataset(self, dataset, classes):
+        """Efficiently filter dataset for specific classes."""
+        class_indices = np.isin(dataset.targets, classes)
+        filtered_dataset = Subset(dataset, np.where(class_indices)[0])
+        return filtered_dataset
 
     def get_task_dataloaders(self, task_id):
         """Get train/test dataloaders for a specific task."""
         classes = self.tasks[task_id]
 
-        train_data, train_targets = self.get_task_data(self.train_dataset, classes)
-        train_targets = torch.tensor([classes.index(t.item()) for t in train_targets])
+        # Filter train dataset
+        train_dataset = self._filter_dataset(self.train_dataset, classes)
+        train_data = torch.stack([train_dataset[i][0] for i in range(len(train_dataset))])
+        train_targets = torch.tensor([classes.index(self.train_dataset.targets[train_dataset.indices[i]].item()) 
+                                      for i in range(len(train_dataset))])
 
-        test_data, test_targets = self.get_task_data(self.test_dataset, classes)
-        test_targets = torch.tensor([classes.index(t.item()) for t in test_targets])
+        # Filter test dataset
+        test_dataset = self._filter_dataset(self.test_dataset, classes)
+        test_data = torch.stack([test_dataset[i][0] for i in range(len(test_dataset))])
+        test_targets = torch.tensor([classes.index(self.test_dataset.targets[test_dataset.indices[i]].item()) 
+                                     for i in range(len(test_dataset))])
 
+        # Reshape data
+        train_data = train_data.view(-1, 28 * 28)
+        test_data = test_data.view(-1, 28 * 28)
+
+        # Create TensorDatasets
+        train_dataset = TensorDataset(train_data.float(), self._one_hot_encode(train_targets))
+        test_dataset = TensorDataset(test_data.float(), self._one_hot_encode(test_targets))
+
+        # Create DataLoaders with optimized settings
         train_loader = DataLoader(
-            TensorDataset(train_data.float(), self._one_hot_encode(train_targets)),
-            batch_size=self.config["batch_size"],
+            dataset=train_dataset,
+            batch_size=self.config.batch_size,
+            generator=torch.Generator(device=self.config.device).manual_seed(
+                self.config.seed
+            ),
+            num_workers=self.config.num_workers,
+            pin_memory=True,
             shuffle=True,
         )
+
         test_loader = DataLoader(
-            TensorDataset(test_data.float(), self._one_hot_encode(test_targets)),
-            batch_size=self.config["batch_size"],
+            dataset=test_dataset,
+            batch_size=self.config.batch_size,
+            generator=torch.Generator(device=self.config.device).manual_seed(
+                self.config.seed
+            ),
+            num_workers=self.config.num_workers,
+            pin_memory=True,
             shuffle=False,
         )
 

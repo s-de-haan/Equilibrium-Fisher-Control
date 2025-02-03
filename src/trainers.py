@@ -326,7 +326,6 @@ class TrainerCL(TrainerInterface):
             )
 
             epoch_test_loss, accuracy = self._test_step(0)
-
             
             logger.info(
                 f"Task {task_id + 1} - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
