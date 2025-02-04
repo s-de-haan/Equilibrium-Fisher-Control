@@ -12,77 +12,72 @@ class EWC_network(NetworkInterface):
         super().__init__(BP_layer, ReLU, Linear, config, name)
         self.importance = config.importance_ewc
         self._means = {}
-        self._precision_matrices = {}
+        self._fisher = {}
         self._first_task = True
-        
-    def _calculate_batch_fisher(self):
-        """Calculate Fisher Information for a single batch."""
-        precision_matrices = {}
+    
+    def _calculate_fisher(self, dataloader):
+        """Compute Fisher Information Matrix across entire dataset"""
+        fisher = {}
         for n, p in self.named_parameters():
             if p.requires_grad:
-                precision_matrices[n] = torch.zeros_like(p)
+                fisher[n] = torch.zeros_like(p)
 
         self.eval()
-        output = self(self.input)
-        label = output.argmax(1)
-        loss = F.nll_loss(F.log_softmax(output, dim=1), label)
-        loss.backward(retain_graph=True)
+
+        for inputs, targets in dataloader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            
+            # Log likelihood computation (either with probs or targets)
+            outputs = self(inputs)
+            log_probs = F.log_softmax(outputs, dim=1)
+            probs = torch.exp(log_probs)  # Get actual probabilities
+            log_likelihood = (log_probs * probs).sum(dim=1)
+
+            # log_probs = F.log_softmax(outputs, dim=1)
+            # log_likelihood = (log_probs * targets).sum(dim=1)
+
+            # Compute gradients
+            self.zero_grad()
+            log_likelihood.sum().backward()
+
+            # Accumulate squared gradients
+            for n, p in self.named_parameters():
+                if p.requires_grad and p.grad is not None:
+                    fisher[n].data += p.grad.data ** 2
+
+        # Normalize
+        for n in fisher.keys():
+            fisher[n] /= len(dataloader.dataset)
+
+        return fisher
+
+    def ewc_loss(self, importance=1000.0):
+        """Compute EWC regularization loss"""
+        loss = 0.0
         
         for n, p in self.named_parameters():
-            if p.requires_grad and p.grad is not None:
-                precision_matrices[n].data += (p.grad.data ** 2) / self.bzs
+            if n in self._means and n in self._fisher:
+                loss += torch.sum(self._fisher[n] * (p - self._means[n]) ** 2)
+        return importance * loss
 
-        return precision_matrices
+    def backward(self, y):
+        loss = self.loss_fn(self.y_hat, y)
 
-    def update_fisher(self):
-        """Update Fisher Information Matrix using current batch."""
-        batch_fisher = self._calculate_batch_fisher()  # Use only input data
-        
-        if not self._precision_matrices:  # Initialize if empty
-            self._precision_matrices = batch_fisher
-            return
-        
-        # Running average of Fisher Information
-        for n in self._precision_matrices.keys():
-            self._precision_matrices[n] = (
-                0.95 * self._precision_matrices[n] + 
-                0.05 * batch_fisher[n]
-            )
+        if not self._first_task:
+            loss += self.ewc_loss()
 
-    def store_task_parameters(self):
-        """Store current parameters after task completion."""
+        loss.backward()
+
+    def complete_task(self, dataloader):
+        """Store parameter means and compute Fisher Information Matrix"""
+        if self._first_task:
+            self._first_task = False
+            
+        # Store current parameter values
         self._means = {}
         for n, p in self.named_parameters():
             if p.requires_grad:
                 self._means[n] = p.data.clone()
-
-    def ewc_loss(self):
-        """Calculate EWC penalty term."""
-        loss = 0
-        if not self._first_task and self._means:
-            for n, p in self.named_parameters():
-                if p.requires_grad and n in self._means:
-                    _loss = (
-                        self._precision_matrices[n] * 
-                        (p - self._means[n]) ** 2
-                    ).sum()
-                    loss += _loss
-        return self.importance * loss
-
-    def backward(self, y):
-        # Update Fisher Information Matrix
-        if not self._first_task:
-            self.update_fisher()
-
-        # Calculate gradients including EWC penalty
-        loss = self.loss_fn(self.y_hat, y)
-        if not self._first_task:
-            loss += self.ewc_loss()
         
-        loss.backward()
-
-    def complete_task(self):
-        """Call this at the end of each task."""
-        if self._first_task:
-            self._first_task = False
-        self.store_task_parameters()
+        # Compute Fisher Information Matrix
+        self._fisher = self._calculate_fisher(dataloader)
