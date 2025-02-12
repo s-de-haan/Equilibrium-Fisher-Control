@@ -1,10 +1,11 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-class NetworkInterface(nn.Module):
+class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
-
+        
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
         self.loss_fn = config.loss_fn
         self.name = name
@@ -31,7 +32,6 @@ class NetworkInterface(nn.Module):
 
     def create_network(self, layer_class, activation_fn, out_activation_fn, config):
         _layers = config.layers
-
         self.layers = nn.ModuleList()
         for i in range(len(_layers) - 2):
             self.layers.append(
@@ -53,13 +53,8 @@ class NetworkInterface(nn.Module):
         self.loss = self.loss_fn(y, y_hat)
         return self.loss
 
-    def complete_task(self):
-        pass
-
-class JacobianInterface(NetworkInterface):
-    def __init__(self, layer_class, activation_fn, out_activation_fn, config, name) -> None:
-        super().__init__(layer_class, activation_fn, out_activation_fn, config, name)
-
+class JacobianInterface:
+    def __init__(self, config):
         if config.mode == "ndi":
             self._inversion = self._non_dynamical_inversion
         else:
@@ -109,3 +104,56 @@ class JacobianInterface(NetworkInterface):
             )
 
         return torch.cat(Js, dim=2), Js
+
+class FisherInterface:
+    def __init__(self):
+        self._means = {}
+        self._fisher = {}
+        self._first_task = True
+        
+    @torch.no_grad()
+    def _calculate_fisher(self, dataloader):
+        """Compute Fisher Information Matrix across entire dataset"""
+        fisher = {}
+        for n, p in self.named_parameters():
+            if p.requires_grad:
+                fisher[n] = torch.zeros_like(p)
+
+        for inputs, targets in dataloader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            
+            # Log likelihood computation
+            outputs = self(inputs)
+            log_probs = F.log_softmax(outputs, dim=1)
+            probs = torch.exp(log_probs)
+            log_likelihood = (log_probs * probs).sum(dim=1)
+
+            # Compute gradients
+            self.zero_grad()
+            log_likelihood.sum().backward()
+
+            # Accumulate squared gradients
+            for n, p in self.named_parameters():
+                if p.requires_grad and p.grad is not None:
+                    fisher[n].data += p.grad.data ** 2
+
+        # Normalize
+        for n in fisher.keys():
+            fisher[n] /= len(dataloader.dataset)
+
+        return fisher
+
+    @torch.no_grad()
+    def complete_task(self, dataloader):
+        """Store parameter means and compute Fisher Information Matrix"""
+        if self._first_task:
+            self._first_task = False
+            
+        # Store current parameter values
+        self._means = {}
+        for n, p in self.named_parameters():
+            if p.requires_grad:
+                self._means[n] = p.data.clone()
+        
+        # Compute Fisher Information Matrix
+        self._fisher = self._calculate_fisher(dataloader)

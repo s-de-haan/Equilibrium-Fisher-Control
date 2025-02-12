@@ -2,7 +2,6 @@ from collections import OrderedDict
 from typing import Any, Tuple
 
 import torch
-import torch.nn as nn
 
 
 class ModelOutput(OrderedDict):

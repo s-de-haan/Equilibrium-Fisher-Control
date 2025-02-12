@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 
-class LayerInterface(nn.Module):
+class Layer(nn.Module):
     def __init__(self, in_features, out_features, activation_fn, name):
         super().__init__()
 

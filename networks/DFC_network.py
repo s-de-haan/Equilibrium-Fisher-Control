@@ -1,13 +1,13 @@
 import torch
-import torch.nn as nn
 
-from networks.network_interface import JacobianInterface
+from networks.network_interface import *
 from networks.layers import DFC_layer
 from networks.activation_function import *
 
-class DFC_network(JacobianInterface):
+class DFC_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_network") -> None:
-        super().__init__(DFC_layer, ReLU, Linear, config, name)
+        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
+        JacobianInterface.__init__(self)
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
@@ -108,9 +108,10 @@ class DFC_network(JacobianInterface):
             rs.append(r_current[i])
 
 
-class DFC_Mult_network(JacobianInterface):
+class DFC_Mult_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_Mult_network") -> None:
-        super().__init__(DFC_layer, mReLU, mLinear, config, name)
+        Network.__init__(self, DFC_layer, mReLU, mLinear, config, name)
+        JacobianInterface.__init__(self)
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
@@ -189,8 +190,10 @@ class DFC_Mult_network(JacobianInterface):
             for i, layer in enumerate(self.layers):
                 r_previous = r_current[i - 1] if i != 0 else self.input
 
-                # Basal and apical
+                # Basal
                 v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                
+                # Apical
                 e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
                 if i == len(self.layers) - 1: # Correct for linear output layer
                     e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)

@@ -5,7 +5,6 @@ import os
 import sys
 import logging
 
-from copy import deepcopy
 from src.callbacks import (
     CallbackHandler,
     MetricConsolePrinterCallback,

@@ -1,11 +1,7 @@
-import torch
-import torch.nn as nn
-import random
-
-from networks.layer_interface import LayerInterface
+from networks.layer_interface import Layer
 
 
-class DFC_layer(LayerInterface):
+class DFC_layer(Layer):
     def __init__(self, in_features, out_features, activation_fn, name="DFC_layer"):
         super(DFC_layer, self).__init__(in_features, out_features, activation_fn, name)
 
@@ -19,7 +15,7 @@ class DFC_layer(LayerInterface):
         self._weights.grad = weights_grad
         self._bias.grad = bias_grad
 
-class BP_layer(LayerInterface):
+class BP_layer(Layer):
     def __init__(
         self, in_features, out_features, activation_fn, name="BP_layer"
     ) -> None:
