@@ -28,7 +28,7 @@ def main():
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
-        "dt_di": 0.006,  # dynamical inversion params
+        "dt_di": 0.006,  # dynamical inversion params makes big speed diff - lower for mult, higher (0.02) for additive
         "time_constant_ratio": 0.2,
         "tmax_di": 500,
         "k_p": 2.0,
@@ -41,7 +41,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = BP_network(config=config)
+    model = DFC_Mult_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

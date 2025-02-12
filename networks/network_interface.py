@@ -8,6 +8,7 @@ class Network(nn.Module):
         
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
         self.loss_fn = config.loss_fn
+        self.device = config.device
         self.name = name
 
     @property
@@ -111,7 +112,6 @@ class FisherInterface:
         self._fisher = {}
         self._first_task = True
         
-    @torch.no_grad()
     def _calculate_fisher(self, dataloader):
         """Compute Fisher Information Matrix across entire dataset"""
         fisher = {}
@@ -119,15 +119,19 @@ class FisherInterface:
             if p.requires_grad:
                 fisher[n] = torch.zeros_like(p)
 
+        self.eval()
+
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
-            
             # Log likelihood computation
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
             probs = torch.exp(log_probs)
             log_likelihood = (log_probs * probs).sum(dim=1)
 
+            # Can also calculate log likelihood with targets possibly
+            # log_likelihood = (log_probs * probs).sum(dim=1)
+            
             # Compute gradients
             self.zero_grad()
             log_likelihood.sum().backward()
@@ -140,10 +144,10 @@ class FisherInterface:
         # Normalize
         for n in fisher.keys():
             fisher[n] /= len(dataloader.dataset)
+            print(n)
 
         return fisher
 
-    @torch.no_grad()
     def complete_task(self, dataloader):
         """Store parameter means and compute Fisher Information Matrix"""
         if self._first_task:

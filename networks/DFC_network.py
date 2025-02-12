@@ -7,7 +7,7 @@ from networks.activation_function import *
 class DFC_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_network") -> None:
         Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
-        JacobianInterface.__init__(self)
+        JacobianInterface.__init__(self, config)
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
@@ -111,7 +111,7 @@ class DFC_network(Network, JacobianInterface):
 class DFC_Mult_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_Mult_network") -> None:
         Network.__init__(self, DFC_layer, mReLU, mLinear, config, name)
-        JacobianInterface.__init__(self)
+        JacobianInterface.__init__(self, config)
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):

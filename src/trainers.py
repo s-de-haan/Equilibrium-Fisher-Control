@@ -294,8 +294,6 @@ class TrainerCL(TrainerInterface):
                     metrics.epoch_test_loss = epoch_test_loss
                     metrics.accuracy = accuracy
 
-                self.model.complete_task()
-
                 self.callback_handler.on_epoch_end(training_config=self.config)
                 self.callback_handler.on_log(
                     self.config,
@@ -310,6 +308,8 @@ class TrainerCL(TrainerInterface):
                 training_config=self.config, task_id=task_id + 1
             )
         
+            self.model.complete_task(train_loader)
+
         if self.save:
             self._save_model()
 

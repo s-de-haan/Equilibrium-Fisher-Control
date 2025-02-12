@@ -89,6 +89,8 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         """Compute Fisher-based modulation for parameter preservation"""
         layername = layer.name
         if layername not in self._fisher or layername not in self._means:
+            print("ERR ", layername)
+            err1
             return 0.0
 
         current_params = layer.get_parameters()
@@ -96,6 +98,8 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         fisher = self._fisher[layername]
 
         gamma = self.beta * torch.sum(fisher * (current_params - mean_params))
+        print(gamma.shape, gamma)
+        err
         return gamma
 
     def complete_task(self, dataloader):
