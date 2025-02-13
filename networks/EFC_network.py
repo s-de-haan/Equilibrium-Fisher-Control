@@ -60,6 +60,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
                 if not self._first_task and t == 10 and i == 1:
                     print("psi: ",torch.norm(psi), "gamma: ", torch.norm(gamma))
+                # TODO: Check Fisher values, check neuron-specific gamma, check beta tuning
 
                 if i == len(self.layers) - 1:
                     e_psi_gamma = torch.where(v_ff_current[i] > 0, e_psi_gamma, 1 / e_psi_gamma)
