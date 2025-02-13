@@ -10,7 +10,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
-        self.beta = config.beta  # Fisher preservation coefficient
+        self.beta = config.beta_efc  # Fisher preservation coefficient
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -54,11 +54,12 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
 
                 # Apical with teaching signal and Fisher modulation
-                if not self._first_task:
-                    gamma = self._compute_fisher_modulation(layer)
-                    e_psi_gamma = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze() + gamma)
-                else:
-                    e_psi_gamma = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
+                psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
+                gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
+                e_psi_gamma = torch.exp(psi + gamma)
+
+                if not self._first_task and t == 10 and i == 1:
+                    print("psi: ",torch.norm(psi), "gamma: ", torch.norm(gamma))
 
                 if i == len(self.layers) - 1:
                     e_psi_gamma = torch.where(v_ff_current[i] > 0, e_psi_gamma, 1 / e_psi_gamma)
@@ -85,21 +86,14 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-    def _compute_fisher_modulation(self, layer):
+    def _compute_fisher_modulation(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
-        layername = layer.name
-        if layername not in self._fisher or layername not in self._means:
-            print("ERR ", layername)
-            err1
-            return 0.0
-
-        current_params = layer.get_parameters()
-        mean_params = self._means[layername]
-        fisher = self._fisher[layername]
-
-        gamma = self.beta * torch.sum(fisher * (current_params - mean_params))
-        print(gamma.shape, gamma)
-        err
+        gamma = 0.0
+        for n, p in layer.named_parameters():
+            name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                gamma += self.beta * torch.sum(self._fisher[name] * (p - self._means[name]))
+                
         return gamma
 
     def complete_task(self, dataloader):

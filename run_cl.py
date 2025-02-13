@@ -34,7 +34,7 @@ def main():
         "eps": 1e-4,
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 0.0 # efc params
+        "beta_efc": -1.0 # efc params
     }
     config = dotdict(config)
 

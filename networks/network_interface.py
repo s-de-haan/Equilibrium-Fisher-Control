@@ -144,7 +144,6 @@ class FisherInterface:
         # Normalize
         for n in fisher.keys():
             fisher[n] /= len(dataloader.dataset)
-            print(n)
 
         return fisher
 
