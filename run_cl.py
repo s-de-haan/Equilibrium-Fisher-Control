@@ -14,7 +14,7 @@ def main():
     config = {
         "layers": [784, 256, 256, 256, 2],
         "lr": 1e-3,
-        "batch_size": 256,
+        "batch_size": 128,
         "epochs": 3,
         # "runs": 10,
         "mode": "di",  # or "di"
@@ -34,7 +34,7 @@ def main():
         "eps": 1e-4,
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": -1.0 # efc params
+        "beta_efc": 10000.0 # efc params
     }
     config = dotdict(config)
 
