@@ -12,8 +12,8 @@ def main():
     config = {
         "layers": [784, 256, 256, 256, 10],
         "lr": 1e-3,
-        "batch_size": 256,
-        "epochs": 200,
+        "batch_size": 1000,
+        "epochs": 10,
         # "runs": 10,
         "mode": "di",  # or "di"
         "num_workers": 1,

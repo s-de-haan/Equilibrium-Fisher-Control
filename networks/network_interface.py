@@ -106,36 +106,34 @@ class JacobianInterface(NetworkInterface):
 
         return torch.cat(Js, dim=2), Js
     
-    def _broyden(self, Js_init=None): #TODO: implementation of Broyden's method for Jacobian updates.
+    def _modified_broyden(self, Js_init=None, prev_error_vect=None, current_error_vect=None, layer_sizes=None): #
+        '''
+        Modified Broyden's method for updating the Jacobian matrix during the training.
 
-        Js = [None] * len(self.layers)
-        output_size = self.layer_sizes[-1]
+        inputs:
+        Js_init - Initial Jacobian matrix (torch tensor) dimensions (output_size, num_neurons)
+        prev_error_vect - previous error vector (output error \hat{y} - y) (torch tensor) dimensions (output_size, 1)
+        current_error_vect - current error vector (output error \hat{y} - y) (torch tensor) dimensions (output_size, 1)
+        '''
 
-        from scipy import optimize
+        # s_k = torch.bmm(torch.pinverse(Js_init), prev_error_vect.unsqueeze(dim=2))
+        s_k = torch.linalg.lstsq(Js_init, prev_error_vect.unsqueeze(dim=2)).solution
+        y_k = (current_error_vect - prev_error_vect).unsqueeze(dim=2)
 
-        func = relu
+        B_k = Js_init + torch.bmm((y_k - torch.bmm(Js_init, s_k)), s_k.permute(0, 2, 1))/torch.bmm((s_k.permute(0, 2, 1)), s_k)
+        
+        sliced_B_k = [B_k[:, :, :layer_sizes[0]], B_k[:, :, layer_sizes[0]:layer_sizes[0]+layer_sizes[1]], B_k[:, :, layer_sizes[0]+layer_sizes[1]:layer_sizes[0]+layer_sizes[1]+layer_sizes[2]], B_k[:, :, layer_sizes[0]+layer_sizes[1]+layer_sizes[2]:layer_sizes[0]+layer_sizes[1]+layer_sizes[2]+layer_sizes[3]]]
 
-        for i in range(len(self.layers) - 1, -1, -1):
-            sol = optimize.broyden1(func, Js_init[i].cpu().numpy(), f_tol=1e-14, f_rtol=1e-14, verbose=True)
-            Js[i] = torch.from_numpy(sol.copy())
+        return B_k, sliced_B_k
 
-        # sol = optimize.broyden1(func, Js_init, f_tol=1e-14, f_rtol=1e-14, verbose=True)
-        return torch.cat(Js, dim=2), Js
-    
-
-def relu(x):
-    #numpy based one TODO: horrible implementation, fix this.
-    return torch.nn.ReLU()(torch.tensor(x)).cpu().numpy()
 
 
 '''
 Notes about work in progress:
 Broyden's method is a good candidate for updating the Jacobian matrix.
 Steps to be followed next:
-- Compare single layer calculations with the Broyden's method.
-- For all layers, just make the batch size 1 and compare the results.
-- If everyting is fine, then implement the Broyden's method for the torch tensors (for gpu) and test it.
-
+- Test the performance of the modified Broyden's method.
+- If not working check the multiiterative (more regular) Broyden's method.
 Current status:
-Some random functions and lines are added to the code. They are not working properly.
+Torch implementation of a modified Broyden's method is ready. Now tests to be followed next.
 '''

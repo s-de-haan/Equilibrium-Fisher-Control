@@ -217,7 +217,9 @@ class Trainer(TrainerInterface):
             y_hat = self.model(X)
 
             loss = self.loss_fn(y_hat, y)
-
+            # TODO: test
+            # Jis_torch = torch.autograd.functional.jacobian(self.model, X)
+            
             self.optimizer.zero_grad()
             self.model.backward(y)
             self.optimizer.step()
