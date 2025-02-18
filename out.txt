@@ -1,0 +1,32 @@
+Training:
+ - layers: [784, 256, 256, 256, 2]
+ - lr: 2e-06
+ - batch_size: 256
+ - epochs: 20
+ - mode: di
+ - num_workers: 8
+ - loss_fn: ce
+ - optimizer: Adam
+ - scheduler: CosineAnnealingLR
+ - device: cuda:1
+ - output_dir: ./outputs
+ - seed: 1337
+ - target_lr: 0.01
+ - alpha_di: 0.001
+ - dt_di: 0.008
+ - time_constant_ratio: 0.2
+ - tmax_di: 500
+ - k_p: 2.0
+ - eps: 0.0001
+ - save: False
+ - importance_ewc: 1.0
+ - beta_efc: 8.0
+ - model: EFC_network
+
+Starting Task 1/5
+				Epoch: 001, Train loss: 0.6459 & test loss: 0.5900 & accuracy: 69.36
+				Epoch: 002, Train loss: 0.5222 & test loss: 0.4718 & accuracy: 78.06
+				Epoch: 003, Train loss: 0.4163 & test loss: 0.3725 & accuracy: 85.86
+				Epoch: 004, Train loss: 0.3299 & test loss: 0.2953 & accuracy: 92.06
+				Epoch: 005, Train loss: 0.2645 & test loss: 0.2379 & accuracy: 95.46
+				Epoch: 006, Train loss: 0.2156 & test loss: 0.1944 & accuracy: 97.45

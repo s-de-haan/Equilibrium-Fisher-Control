@@ -6,7 +6,7 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, mReLU, mLinear, config, name)
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
@@ -35,7 +35,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             if converged_mask.all():
                 break
 
-            error = self.targets - r_current[-1]
+            error = self._compute_error(r_current[-1], self.targets)
             
             # Proportional and integral (PI) control
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
@@ -57,20 +57,25 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
                 if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                    gamma = - torch.clamp(gamma, min=None, max=psi)
+                    gamma = torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
+                    # if i == 1:
+                    #     print(gamma[0] - psi[0])
 
-                e_psi_gamma = torch.exp(psi + gamma)
+                e_psi_gamma = torch.exp(psi + gamma) # torch.tanh Bounded between 0 and 2
 
-                if not self._first_task and t == 10:
-                    print("psi: ",torch.norm(psi), "gamma: ", torch.norm(gamma), "mean epsi: ", torch.mean(e_psi_gamma), "max gamma:", gamma.max())
+                # if not self._first_task and t == 10:
+                #     print("psi: ",torch.norm(psi), "gamma: ", torch.norm(gamma), "mean epsi: ", torch.mean(e_psi_gamma), "max gamma:", gamma.max())
+                #     print("Fisher:", self._fisher[f'layers.0._weights'].max(),self._fisher[f'layers.1._weights'].max(),self._fisher[f'layers.2._weights'].max(),self._fisher[f'layers.3._weights'].max())
+                    
+                    
 
                 # TODO: Check Fisher values, check neuron-specific gamma, check beta tuning
                 # Is there a way to balance the neuron-specific strength?
                 # We need sparsity?
                 # TODO: for beta, is the maximal effect cancelling out? or is maximal going back?
 
-                if i == len(self.layers) - 1:
-                    e_psi_gamma = torch.where(v_ff_current[i] > 0, e_psi_gamma, 1 / e_psi_gamma)
+                if i == len(self.layers) - 1 and not self._first_task:
+                    e_psi_gamma = torch.ones_like(e_psi_gamma) # torch.where(v_ff_current[i] > 0, e_psi_gamma, 1 / e_psi_gamma)
 
                 # Soma with modulation
                 tau = self.dt / self.time_constant_ratio
@@ -93,11 +98,12 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             layer.r_ff = layer.activation_fn(v_ff_current[i])
             layer.r_prev = rs[i]
             rs.append(r_current[i])
+    
 
     def _compute_fisher_modulation(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
-        active_mask = (layer.r_previous > 0).float() # consider masking vs unmasking
+        active_mask = (layer.r_previous > 0.13).float() # consider masking vs unmasking TODO remove or correct for smalllll values < eps with softplus??
 
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'

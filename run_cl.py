@@ -13,13 +13,13 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 256, 256, 256, 2],
-        "lr": 1e-3,
-        "batch_size": 128,
-        "epochs": 3,
+        "lr": 2e-6,
+        "batch_size": 256,
+        "epochs": 20,
         # "runs": 10,
         "mode": "di",  # or "di"
-        "num_workers": 1,
-        "loss_fn": nn.MSELoss(),
+        "num_workers": 8,
+        "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
         "device": "cuda:1",
@@ -27,14 +27,14 @@ def main():
         "seed": 1337,
         "target_lr": 1e-2,
         "alpha_di": 1e-3,
-        "dt_di": 0.006,  # dynamical inversion params
+        "dt_di": 0.008,  # dynamical inversion params
         "time_constant_ratio": 0.2,
         "tmax_di": 500,
         "k_p": 2.0,
         "eps": 1e-4,
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 10000.0 # efc params
+        "beta_efc": 8.0, # efc params
     }
     config = dotdict(config)
 

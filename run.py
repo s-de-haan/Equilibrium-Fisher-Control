@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 
 from networks.BP_network import *
@@ -14,13 +13,13 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 256, 256, 256, 10],
-        "lr": 1e-3,
+        "lr": 1e-4,
         "batch_size": 256,
         "epochs": 200,
         # "runs": 10,
         "mode": "di",  # or "di"
-        "num_workers": 1,
-        "loss_fn": nn.MSELoss(),
+        "num_workers": 8,
+        "loss_fn": "ce", # "mse" or "ce"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
         "device": "cuda:1",

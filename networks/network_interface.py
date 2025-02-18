@@ -7,7 +7,8 @@ class Network(nn.Module):
         super().__init__()
         
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
-        self.loss_fn = config.loss_fn
+        self.loss_fn = nn.MSELoss() if config.loss_fn == "mse" else nn.CrossEntropyLoss()
+        self.loss_fn_name = config.loss_fn
         self.device = config.device
         self.name = name
 
@@ -50,8 +51,10 @@ class Network(nn.Module):
             )
         )
 
-    def calculate_loss(self, y, y_hat):
-        self.loss = self.loss_fn(y, y_hat)
+    def calculate_loss(self, y_hat, y):
+        # print("Y", y_hat)
+        self.loss = self.loss_fn(y_hat, y)
+        # print("loss", self.loss)
         return self.loss
 
 class JacobianInterface:
@@ -71,19 +74,39 @@ class JacobianInterface:
             assert self.apical_time_constant > 0
             assert self.eps > 0
 
+        if config.loss_fn == "mse":
+            self._compute_error = self._compute_error_mse
+            self._set_targets = self._set_targets_mse
+        else:
+            self._compute_error = self._compute_error_ce
+            self._set_targets = self._set_targets_ce
+            self._softmax = nn.Softmax(dim=1)
+
         self.target_lr = config.target_lr
         self.alpha = config.alpha_di
 
     def backward(self, y):
         self._set_targets(y)
+        # print("Targets", self.targets)
         self._inversion()
 
         for layer in self.layers:
             layer.backward()
 
-    def _set_targets(self, y):
+    def _compute_error_mse(self, y_hat, y):
+        return y - y_hat
+
+    def _compute_error_ce(self, y_hat, y):
+        return y - self._softmax(y_hat)
+
+    def _set_targets_mse(self, y):
         """ MSE loss solution """
         self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
+        self.output_size = self.targets.shape[1]
+
+    def _set_targets_ce(self, y):
+        """ CE loss solution """
+        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):
@@ -130,7 +153,7 @@ class FisherInterface:
             log_likelihood = (log_probs * probs).sum(dim=1)
 
             # Can also calculate log likelihood with targets possibly
-            # log_likelihood = (log_probs * probs).sum(dim=1)
+            # log_likelihood = (log_probs * targets).sum(dim=1)
             
             # Compute gradients
             self.zero_grad()

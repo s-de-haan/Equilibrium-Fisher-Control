@@ -4,6 +4,8 @@ from networks.network_interface import *
 from networks.layers import DFC_layer
 from networks.activation_function import *
 
+check_nan = lambda x: torch.isnan(x).any().item()
+
 class DFC_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_network") -> None:
         Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
@@ -14,7 +16,7 @@ class DFC_network(Network, JacobianInterface):
         J, _ = self._calculate_full_jacobian()
         J_T = J.transpose(1, 2)
 
-        error = self.targets - self.y_hat
+        error = self._compute_error(self.y_hat, self.targets)
         error = error.unsqueeze(2)
 
         u = torch.linalg.solve(
@@ -68,7 +70,7 @@ class DFC_network(Network, JacobianInterface):
             if converged_mask.all():
                 break
 
-            error = self.targets - r_current[-1]
+            error = self._compute_error(r_current[-1], self.targets)
             
             # Proportional and integral (PI) control.
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
@@ -110,7 +112,7 @@ class DFC_network(Network, JacobianInterface):
 
 class DFC_Mult_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_Mult_network") -> None:
-        Network.__init__(self, DFC_layer, mReLU, mLinear, config, name)
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
 
     @torch.no_grad()
@@ -118,7 +120,7 @@ class DFC_Mult_network(Network, JacobianInterface):
         J, _ = self._calculate_full_jacobian()
         J_T = J.transpose(1, 2)
 
-        error = self.targets - self.y_hat
+        error = self._compute_error(self.y_hat, self.targets)
         error = error.unsqueeze(2)
 
         u = torch.linalg.solve(
@@ -175,7 +177,7 @@ class DFC_Mult_network(Network, JacobianInterface):
             if converged_mask.all():
                 break
 
-            error = self.targets - r_current[-1]
+            error = self._compute_error(r_current[-1], self.targets)
             
             # Proportional and integral (PI) control.
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
@@ -195,8 +197,8 @@ class DFC_Mult_network(Network, JacobianInterface):
                 
                 # Apical
                 e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
-                if i == len(self.layers) - 1: # Correct for linear output layer
-                    e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
+                # if i == len(self.layers) - 1: # Correct for linear output layer
+                #     e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
 
                 # Soma with apical
                 tau = self.dt / self.time_constant_ratio
