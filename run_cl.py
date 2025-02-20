@@ -13,7 +13,7 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 256, 256, 256, 2],
-        "lr": 2e-6,
+        "lr": 1e-6,
         "batch_size": 256,
         "epochs": 20,
         # "runs": 10,
@@ -22,16 +22,16 @@ def main():
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:1",
+        "device": "cuda:2",
         "output_dir": "./outputs",
         "seed": 1337,
-        "target_lr": 1e-2,
+        "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-3,
         "dt_di": 0.008,  # dynamical inversion params
-        "time_constant_ratio": 0.2,
+        "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
         "k_p": 2.0,
-        "eps": 1e-4,
+        "eps": 1e-4, # there is an interplay between dt_di and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
         "beta_efc": 8.0, # efc params

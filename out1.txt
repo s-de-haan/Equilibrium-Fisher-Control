@@ -1,0 +1,54 @@
+Training:
+ - layers: [784, 256, 256, 256, 2]
+ - lr: 1e-06
+ - batch_size: 256
+ - epochs: 20
+ - mode: di
+ - num_workers: 8
+ - loss_fn: ce
+ - optimizer: Adam
+ - scheduler: CosineAnnealingLR
+ - device: cuda:2
+ - output_dir: ./outputs
+ - seed: 1337
+ - target_lr: 0.01
+ - alpha_di: 0.001
+ - dt_di: 0.008
+ - time_constant_ratio: 0.2
+ - tmax_di: 500
+ - k_p: 2.0
+ - eps: 0.0001
+ - save: False
+ - importance_ewc: 1.0
+ - beta_efc: 12.0
+ - model: EFC_network
+
+Starting Task 1/5
+				Epoch: 001, Train loss: 0.6588 & test loss: 0.6311 & accuracy: 62.84
+				Epoch: 002, Train loss: 0.6012 & test loss: 0.5754 & accuracy: 68.65
+				Epoch: 003, Train loss: 0.5473 & test loss: 0.5244 & accuracy: 74.56
+				Epoch: 004, Train loss: 0.4992 & test loss: 0.4776 & accuracy: 80.57
+				Epoch: 005, Train loss: 0.4545 & test loss: 0.4350 & accuracy: 85.53
+				Epoch: 006, Train loss: 0.4144 & test loss: 0.3962 & accuracy: 88.13
+				Epoch: 007, Train loss: 0.3778 & test loss: 0.3611 & accuracy: 90.59
+				Epoch: 008, Train loss: 0.3448 & test loss: 0.3292 & accuracy: 92.39
+				Epoch: 009, Train loss: 0.3145 & test loss: 0.3003 & accuracy: 93.66
+				Epoch: 010, Train loss: 0.2869 & test loss: 0.2739 & accuracy: 94.47
+				Epoch: 011, Train loss: 0.2621 & test loss: 0.2504 & accuracy: 95.41
+				Epoch: 012, Train loss: 0.2403 & test loss: 0.2293 & accuracy: 96.31
+				Epoch: 013, Train loss: 0.2199 & test loss: 0.2101 & accuracy: 96.93
+				Epoch: 014, Train loss: 0.2023 & test loss: 0.1928 & accuracy: 97.30
+				Epoch: 015, Train loss: 0.1862 & test loss: 0.1773 & accuracy: 97.68
+				Epoch: 016, Train loss: 0.1714 & test loss: 0.1632 & accuracy: 97.97
+				Epoch: 017, Train loss: 0.1582 & test loss: 0.1506 & accuracy: 98.30
+				Epoch: 018, Train loss: 0.1468 & test loss: 0.1393 & accuracy: 98.49
+				Epoch: 019, Train loss: 0.1362 & test loss: 0.1291 & accuracy: 98.77
+				Epoch: 020, Train loss: 0.1268 & test loss: 0.1199 & accuracy: 98.91
+Testing on Task 1/1
+Task 1 - Loss: 0.1199, Accuracy: 98.9125
+Starting Task 2/5
+				Epoch: 001, Train loss: 0.7789 & test loss: 0.7500 & accuracy: 57.20
+				Epoch: 002, Train loss: 0.6856 & test loss: 0.6755 & accuracy: 63.96
+				Epoch: 003, Train loss: 0.6266 & test loss: 0.6251 & accuracy: 68.27
+				Epoch: 004, Train loss: 0.5827 & test loss: 0.5871 & accuracy: 72.18
+				Epoch: 005, Train loss: 0.5475 & test loss: 0.5560 & accuracy: 74.44
