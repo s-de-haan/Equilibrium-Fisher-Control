@@ -1,0 +1,161 @@
+Training:
+ - layers: [784, 256, 256, 2]
+ - lr: 2e-06
+ - batch_size: 128
+ - epochs: 20
+ - mode: di
+ - num_workers: 8
+ - loss_fn: ce
+ - optimizer: Adam
+ - scheduler: CosineAnnealingLR
+ - device: cuda:5
+ - output_dir: ./outputs
+ - seed: 1337
+ - target_lr: 0.01
+ - alpha_di: 0.0001
+ - taus: [0.01, 0.008, 0.006]
+ - dt_di: 0.008
+ - time_constant_ratio: 0.2
+ - tmax_di: 500
+ - k_p: 2.0
+ - eps: 0.0001
+ - save: False
+ - importance_ewc: 1.0
+ - beta_efc: 4.0
+ - model: EFC_network
+
+Starting Task 1/5
+				Epoch: 001, Train loss: 0.8362 & test loss: 0.7924 & accuracy: 57.83
+				Epoch: 002, Train loss: 0.7587 & test loss: 0.7250 & accuracy: 60.14
+				Epoch: 003, Train loss: 0.6995 & test loss: 0.6725 & accuracy: 62.41
+				Epoch: 004, Train loss: 0.6459 & test loss: 0.6188 & accuracy: 65.01
+				Epoch: 005, Train loss: 0.5926 & test loss: 0.5655 & accuracy: 68.18
+				Epoch: 006, Train loss: 0.5413 & test loss: 0.5141 & accuracy: 72.06
+				Epoch: 007, Train loss: 0.4930 & test loss: 0.4655 & accuracy: 76.12
+				Epoch: 008, Train loss: 0.4474 & test loss: 0.4185 & accuracy: 81.61
+				Epoch: 009, Train loss: 0.4023 & test loss: 0.3710 & accuracy: 86.10
+				Epoch: 010, Train loss: 0.3559 & test loss: 0.3226 & accuracy: 89.98
+				Epoch: 011, Train loss: 0.3082 & test loss: 0.2743 & accuracy: 93.14
+				Epoch: 012, Train loss: 0.2603 & test loss: 0.2279 & accuracy: 95.89
+				Epoch: 013, Train loss: 0.2185 & test loss: 0.1927 & accuracy: 97.07
+				Epoch: 014, Train loss: 0.1870 & test loss: 0.1628 & accuracy: 97.87
+				Epoch: 015, Train loss: 0.1591 & test loss: 0.1390 & accuracy: 98.49
+				Epoch: 016, Train loss: 0.1342 & test loss: 0.1181 & accuracy: 98.68
+				Epoch: 017, Train loss: 0.1179 & test loss: 0.1046 & accuracy: 98.87
+				Epoch: 018, Train loss: 0.1051 & test loss: 0.0934 & accuracy: 99.01
+				Epoch: 019, Train loss: 0.0929 & test loss: 0.0831 & accuracy: 99.10
+				Epoch: 020, Train loss: 0.0833 & test loss: 0.0743 & accuracy: 99.29
+Testing on Task 1/1
+Task 1 - Loss: 0.0743, Accuracy: 99.2908
+Starting Task 2/5
+				Epoch: 001, Train loss: 0.6286 & test loss: 0.5732 & accuracy: 71.79
+				Epoch: 002, Train loss: 0.5010 & test loss: 0.4925 & accuracy: 76.44
+				Epoch: 003, Train loss: 0.4413 & test loss: 0.4365 & accuracy: 79.58
+				Epoch: 004, Train loss: 0.3983 & test loss: 0.3937 & accuracy: 82.86
+				Epoch: 005, Train loss: 0.3634 & test loss: 0.3636 & accuracy: 84.08
+				Epoch: 006, Train loss: 0.3387 & test loss: 0.3406 & accuracy: 85.36
+				Epoch: 007, Train loss: 0.3184 & test loss: 0.3208 & accuracy: 86.63
+				Epoch: 008, Train loss: 0.3012 & test loss: 0.3033 & accuracy: 87.76
+				Epoch: 009, Train loss: 0.2857 & test loss: 0.2872 & accuracy: 88.93
+				Epoch: 010, Train loss: 0.2707 & test loss: 0.2726 & accuracy: 89.52
+				Epoch: 011, Train loss: 0.2579 & test loss: 0.2584 & accuracy: 90.40
+				Epoch: 012, Train loss: 0.2457 & test loss: 0.2469 & accuracy: 91.09
+				Epoch: 013, Train loss: 0.2357 & test loss: 0.2358 & accuracy: 91.43
+				Epoch: 014, Train loss: 0.2245 & test loss: 0.2251 & accuracy: 91.92
+				Epoch: 015, Train loss: 0.2155 & test loss: 0.2153 & accuracy: 92.46
+				Epoch: 016, Train loss: 0.2080 & test loss: 0.2080 & accuracy: 93.00
+				Epoch: 017, Train loss: 0.2009 & test loss: 0.2003 & accuracy: 93.58
+				Epoch: 018, Train loss: 0.1945 & test loss: 0.1934 & accuracy: 93.98
+				Epoch: 019, Train loss: 0.1877 & test loss: 0.1865 & accuracy: 94.12
+				Epoch: 020, Train loss: 0.1814 & test loss: 0.1806 & accuracy: 94.37
+Testing on Task 1/2
+Task 1 - Loss: 0.3235, Accuracy: 88.3688
+Testing on Task 2/2
+Task 2 - Loss: 0.1806, Accuracy: 94.3683
+Starting Task 3/5
+				Epoch: 001, Train loss: 0.5563 & test loss: 0.4857 & accuracy: 77.48
+				Epoch: 002, Train loss: 0.4383 & test loss: 0.4075 & accuracy: 82.50
+				Epoch: 003, Train loss: 0.3815 & test loss: 0.3599 & accuracy: 84.79
+				Epoch: 004, Train loss: 0.3431 & test loss: 0.3256 & accuracy: 86.55
+				Epoch: 005, Train loss: 0.3162 & test loss: 0.3000 & accuracy: 88.21
+				Epoch: 006, Train loss: 0.2924 & test loss: 0.2764 & accuracy: 89.65
+				Epoch: 007, Train loss: 0.2729 & test loss: 0.2583 & accuracy: 90.34
+				Epoch: 008, Train loss: 0.2569 & test loss: 0.2428 & accuracy: 91.04
+				Epoch: 009, Train loss: 0.2424 & test loss: 0.2294 & accuracy: 91.41
+				Epoch: 010, Train loss: 0.2304 & test loss: 0.2176 & accuracy: 91.78
+				Epoch: 011, Train loss: 0.2189 & test loss: 0.2067 & accuracy: 92.42
+				Epoch: 012, Train loss: 0.2089 & test loss: 0.1972 & accuracy: 92.90
+				Epoch: 013, Train loss: 0.1999 & test loss: 0.1885 & accuracy: 93.33
+				Epoch: 014, Train loss: 0.1914 & test loss: 0.1804 & accuracy: 93.86
+				Epoch: 015, Train loss: 0.1836 & test loss: 0.1729 & accuracy: 94.13
+				Epoch: 016, Train loss: 0.1766 & test loss: 0.1662 & accuracy: 94.40
+				Epoch: 017, Train loss: 0.1698 & test loss: 0.1595 & accuracy: 94.61
+				Epoch: 018, Train loss: 0.1636 & test loss: 0.1535 & accuracy: 94.72
+				Epoch: 019, Train loss: 0.1578 & test loss: 0.1479 & accuracy: 94.82
+				Epoch: 020, Train loss: 0.1523 & test loss: 0.1425 & accuracy: 95.09
+Testing on Task 1/3
+Task 1 - Loss: 1.0156, Accuracy: 58.1560
+Testing on Task 2/3
+Task 2 - Loss: 0.3118, Accuracy: 86.3369
+Testing on Task 3/3
+Task 3 - Loss: 0.1425, Accuracy: 95.0907
+Starting Task 4/5
+				Epoch: 001, Train loss: 0.7896 & test loss: 0.5259 & accuracy: 75.13
+				Epoch: 002, Train loss: 0.4381 & test loss: 0.3627 & accuracy: 86.66
+				Epoch: 003, Train loss: 0.3308 & test loss: 0.2903 & accuracy: 90.08
+				Epoch: 004, Train loss: 0.2747 & test loss: 0.2492 & accuracy: 92.15
+				Epoch: 005, Train loss: 0.2378 & test loss: 0.2207 & accuracy: 93.40
+				Epoch: 006, Train loss: 0.2126 & test loss: 0.2007 & accuracy: 94.31
+				Epoch: 007, Train loss: 0.1938 & test loss: 0.1848 & accuracy: 94.81
+				Epoch: 008, Train loss: 0.1788 & test loss: 0.1716 & accuracy: 95.37
+				Epoch: 009, Train loss: 0.1656 & test loss: 0.1608 & accuracy: 95.72
+				Epoch: 010, Train loss: 0.1554 & test loss: 0.1516 & accuracy: 95.97
+				Epoch: 011, Train loss: 0.1452 & test loss: 0.1430 & accuracy: 96.37
+				Epoch: 012, Train loss: 0.1379 & test loss: 0.1364 & accuracy: 96.68
+				Epoch: 013, Train loss: 0.1310 & test loss: 0.1306 & accuracy: 96.83
+				Epoch: 014, Train loss: 0.1258 & test loss: 0.1255 & accuracy: 96.98
+				Epoch: 015, Train loss: 0.1220 & test loss: 0.1208 & accuracy: 97.03
+				Epoch: 016, Train loss: 0.1161 & test loss: 0.1162 & accuracy: 97.08
+				Epoch: 017, Train loss: 0.1114 & test loss: 0.1122 & accuracy: 97.18
+				Epoch: 018, Train loss: 0.1072 & test loss: 0.1088 & accuracy: 97.28
+				Epoch: 019, Train loss: 0.1040 & test loss: 0.1054 & accuracy: 97.28
+				Epoch: 020, Train loss: 0.1014 & test loss: 0.1025 & accuracy: 97.38
+Testing on Task 1/4
+Task 1 - Loss: 0.7273, Accuracy: 71.6312
+Testing on Task 2/4
+Task 2 - Loss: 0.3262, Accuracy: 86.3369
+Testing on Task 3/4
+Task 3 - Loss: 0.3380, Accuracy: 85.8058
+Testing on Task 4/4
+Task 4 - Loss: 0.1025, Accuracy: 97.3817
+Starting Task 5/5
+				Epoch: 001, Train loss: 1.0669 & test loss: 0.8815 & accuracy: 51.79
+				Epoch: 002, Train loss: 0.8139 & test loss: 0.7777 & accuracy: 56.03
+				Epoch: 003, Train loss: 0.7538 & test loss: 0.7434 & accuracy: 57.99
+				Epoch: 004, Train loss: 0.7245 & test loss: 0.7254 & accuracy: 58.65
+				Epoch: 005, Train loss: 0.7152 & test loss: 0.7144 & accuracy: 59.05
+				Epoch: 006, Train loss: 0.7045 & test loss: 0.7068 & accuracy: 59.30
+				Epoch: 007, Train loss: 0.7002 & test loss: 0.7012 & accuracy: 59.51
+				Epoch: 008, Train loss: 0.6947 & test loss: 0.6959 & accuracy: 60.01
+				Epoch: 009, Train loss: 0.6907 & test loss: 0.6918 & accuracy: 60.11
+				Epoch: 010, Train loss: 0.6846 & test loss: 0.6867 & accuracy: 60.46
+				Epoch: 011, Train loss: 0.6819 & test loss: 0.6827 & accuracy: 60.62
+				Epoch: 012, Train loss: 0.6780 & test loss: 0.6787 & accuracy: 60.82
+				Epoch: 013, Train loss: 0.6726 & test loss: 0.6746 & accuracy: 61.17
+				Epoch: 014, Train loss: 0.6684 & test loss: 0.6707 & accuracy: 61.32
+				Epoch: 015, Train loss: 0.6663 & test loss: 0.6677 & accuracy: 61.52
+				Epoch: 016, Train loss: 0.6625 & test loss: 0.6639 & accuracy: 61.93
+				Epoch: 017, Train loss: 0.6586 & test loss: 0.6605 & accuracy: 62.28
+				Epoch: 018, Train loss: 0.6561 & test loss: 0.6579 & accuracy: 62.28
+				Epoch: 019, Train loss: 0.6544 & test loss: 0.6557 & accuracy: 62.43
+				Epoch: 020, Train loss: 0.6507 & test loss: 0.6532 & accuracy: 62.68
+Testing on Task 1/5
+Task 1 - Loss: 0.5814, Accuracy: 62.8369
+Testing on Task 2/5
+Task 2 - Loss: 0.3977, Accuracy: 85.7003
+Testing on Task 3/5
+Task 3 - Loss: 0.4953, Accuracy: 82.0171
+Testing on Task 4/5
+Task 4 - Loss: 0.2341, Accuracy: 95.5690
+Testing on Task 5/5
+Task 5 - Loss: 0.6532, Accuracy: 62.6828

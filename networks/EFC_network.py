@@ -6,11 +6,11 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        Network.__init__(self, DFC_layer, mReLU, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
-        self.beta = config.beta_efc  # Fisher preservation coefficient
+        self.beta = config.beta_efc
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -56,21 +56,14 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 # Apical with teaching signal and Fisher modulation
                 psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline TODO change
-                    gamma = torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
+                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                    scaling_factor = torch.abs(psi).mean()
+                    gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
 
-                e_psi_gamma = torch.exp(psi + gamma) # torch.tanh Bounded between 0 and 2
-
-                # TODO: Check Fisher values, check neuron-specific gamma, check beta tuning
-                # Is there a way to balance the neuron-specific strength?
-                # We need sparsity?
-                # TODO: for beta, is the maximal effect cancelling out? or is maximal going back?
-
-                # if i == len(self.layers) - 1 and not self._first_task:
-                #     e_psi_gamma = torch.ones_like(e_psi_gamma) # torch.where(v_ff_current[i] > 0, e_psi_gamma, 1 / e_psi_gamma)
+                e_psi_gamma = torch.exp(psi + gamma)
 
                 # Soma with modulation
-                tau = self.dt / self.time_constant_ratio
+                tau = layer.tau # self.dt / self.time_constant_ratio
                 v_current[i] += tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
 
                 layer.activation_fn.set_m(e_psi_gamma)
@@ -81,10 +74,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
             u_int_current = u_int_next
             u_current = u_next
-
-        # print(t, self.bzs - converged_mask.sum().item())
-        # TODO Check this when considering hyper parameters, because if t ± 2 the params are degenerate 
-        # TODO might also be that we need layer-wise tau's because the last layer might be degenerate for u
 
         # Steady-state values per layer
         rs = [self.input]
@@ -99,28 +88,19 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
     def _compute_fisher_modulation(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+        fisher_norm = 0.0
 
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'
             if p.requires_grad:
                 base_gamma = self._fisher[full_name] * (p - self._means[full_name])
                 if 'weights' in n:
-                    gamma += self.beta * (layer.r_previous @ base_gamma.T)
+                    gamma += (layer.r_previous @ base_gamma.T)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
                 elif 'bias' in n:
-                    gamma += self.beta * base_gamma # TODO should the baseline be scaled with the activity as well?
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+        
+        gamma = self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
         
         return gamma
-
-    def complete_task(self, dataloader):
-        """Store parameters and compute Fisher matrix at task completion"""
-        if self._first_task:
-            self._first_task = False
-        
-        # Store current parameter values
-        self._means = {}
-        for n, p in self.named_parameters():
-            if p.requires_grad:
-                self._means[n] = p.data.clone()
-        
-        # Compute Fisher Information Matrix
-        self._fisher = self._calculate_fisher(dataloader)

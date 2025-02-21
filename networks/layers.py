@@ -7,8 +7,6 @@ class DFC_layer(Layer):
 
     def backward(self):
         teaching_signal = self.r - self.r_ff
-
-        # print("Teaching signal", teaching_signal)
         
         bsz = self.r_prev.shape[0]
         weights_grad = -2 * 1.0 / bsz * teaching_signal.t().mm(self.r_prev)

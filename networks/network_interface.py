@@ -52,9 +52,7 @@ class Network(nn.Module):
         )
 
     def calculate_loss(self, y_hat, y):
-        # print("Y", y_hat)
         self.loss = self.loss_fn(y_hat, y)
-        # print("loss", self.loss)
         return self.loss
 
 class JacobianInterface:
@@ -81,6 +79,9 @@ class JacobianInterface:
             self._compute_error = self._compute_error_ce
             self._set_targets = self._set_targets_ce
             self._softmax = nn.Softmax(dim=1)
+
+        for i, layer in enumerate(self.layers):
+            layer.tau = config.taus[i]
 
         self.target_lr = config.target_lr
         self.alpha = config.alpha_di
@@ -132,7 +133,8 @@ class JacobianInterface:
 class FisherInterface:
     def __init__(self):
         self._means = {}
-        self._fisher = {}
+        self._fisher = {}  # Accumulated Fisher matrix
+        self._means = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
         
     def _calculate_fisher(self, dataloader):
@@ -150,10 +152,10 @@ class FisherInterface:
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
             probs = torch.exp(log_probs)
-            log_likelihood = (log_probs * probs).sum(dim=1)
+            # log_likelihood = (log_probs * probs).sum(dim=1)
 
-            # Can also calculate log likelihood with targets possibly
-            # log_likelihood = (log_probs * targets).sum(dim=1)
+            # Can also calculate log likelihood with targets possibly TODO double check what to use
+            log_likelihood = (log_probs * targets).sum(dim=1)
             
             # Compute gradients
             self.zero_grad()
@@ -171,15 +173,14 @@ class FisherInterface:
         return fisher
 
     def complete_task(self, dataloader):
-        """Store parameter means and compute Fisher Information Matrix"""
+        """ Update accumulated Fisher and latest means after finishing a task. """
+        current_fisher = self._calculate_fisher(dataloader)
+        self._means = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
+
+        # Initialize for the first task else accumulate Fisher and update means
         if self._first_task:
+            self._fisher = current_fisher
             self._first_task = False
-            
-        # Store current parameter values
-        self._means = {}
-        for n, p in self.named_parameters():
-            if p.requires_grad:
-                self._means[n] = p.data.clone()
-        
-        # Compute Fisher Information Matrix
-        self._fisher = self._calculate_fisher(dataloader)
+        else:
+            for n in self._fisher:
+                self._fisher[n] += current_fisher[n]
