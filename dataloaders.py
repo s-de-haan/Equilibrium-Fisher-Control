@@ -25,7 +25,6 @@ class BaseMNISTDataset(Dataset):
         # Map target to index in self.classes
         # target_idx = self.classes.index(target.item() if torch.is_tensor(target) else target)
         # return torch.eye(len(self.classes))[target_idx]
-
         target_idx = target.item() if torch.is_tensor(target) else target
         return torch.eye(len(self.classes))[target_idx]
     
@@ -40,10 +39,12 @@ class BaseMNISTDataset(Dataset):
 
 # Task Incremental Learning class
 class TaskILMNIST:
-    def __init__(self, num_tasks=5, batch_size=64, classes_per_task=2):
-        self.num_tasks = num_tasks
-        self.batch_size = batch_size
-        self.classes_per_task = classes_per_task
+    def __init__(self, config):
+        self.num_tasks = 5
+        self.config = config
+        self.batch_size = self.config.batch_size
+        self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+        self.classes_per_task = 2
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
@@ -85,13 +86,21 @@ class TaskILMNIST:
         train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, one_hot_classes, self.transform)
         test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, one_hot_classes, self.transform)
         
+        try:
+            generator = torch.Generator(device=self.device)
+        except RuntimeError:
+            # Fallback to CPU generator if device generator not supported
+            generator = torch.Generator(device='cpu')
+
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
+                                  num_workers=self.config.num_workers)
+        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
+                                 num_workers=self.config.num_workers)
         
         return train_loader, test_loader
     
-    def get_all_dataloaders(self):
+    def get_all_tasks_dataloaders(self):
         """Get dataloaders for all tasks."""
         return [
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
@@ -99,9 +108,12 @@ class TaskILMNIST:
 
 # Class Incremental Learning class
 class DomainILMNIST:
-    def __init__(self, num_tasks=5, batch_size=64):
-        self.num_tasks = num_tasks
-        self.batch_size = batch_size
+    def __init__(self, config):
+        self.num_tasks = 5
+        self.config = config
+        self.batch_size = self.config.batch_size
+        self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+        
         
     def _load_data(self):
         train_dataset = torchvision.datasets.MNIST(root='./data', train=True, download=True)
@@ -135,12 +147,25 @@ class DomainILMNIST:
         train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, task_classes, transform)
         test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, task_classes, transform)
         
+        try:
+            generator = torch.Generator(device=self.device)
+        except RuntimeError:
+            # Fallback to CPU generator if device generator not supported
+            generator = torch.Generator(device='cpu')
+
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=2)
+        # train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
+        #                           num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        # test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
+        #                          num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
+                                  num_workers=self.config.num_workers)
+        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
+                                 num_workers=self.config.num_workers)
+
         return train_loader, test_loader
     
-    def get_all_dataloaders(self):
+    def get_all_tasks_dataloaders(self):
         """Get dataloaders for all tasks."""
         return [
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
@@ -148,10 +173,12 @@ class DomainILMNIST:
 
 # Domain Incremental Learning class
 class ClassILMNIST:
-    def __init__(self, num_tasks=5, batch_size=64, classes_per_task=2):
-        self.num_tasks = num_tasks
-        self.batch_size = batch_size
-        self.classes_per_task = classes_per_task
+    def __init__(self, config):
+        self.num_tasks = 5
+        self.config = config
+        self.batch_size = self.config.batch_size
+        self.classes_per_task = 2
+        self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
@@ -178,17 +205,33 @@ class ClassILMNIST:
         train_task_targets = train_targets[train_mask]
         test_task_data = test_data[test_mask]
         test_task_targets = test_targets[test_mask]
+
+        # Remap labels to [0, 1] based on even/odd parity
+        # Even = 0, Odd = 1
+        train_task_targets = torch.tensor([0 if t.item() % 2 == 0 else 1 for t in train_task_targets])
+        test_task_targets = torch.tensor([0 if t.item() % 2 == 0 else 1 for t in test_task_targets])
         
+        # Use [0, 1] as classes for even/odd classification
+        even_odd_classes = [0, 1]
+
         # No label remapping (keep original labels)
         train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, task_classes, self.transform)
         test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, task_classes, self.transform)
         
+        try:
+            generator = torch.Generator(device=self.device)
+        except RuntimeError:
+            # Fallback to CPU generator if device generator not supported
+            generator = torch.Generator(device='cpu')
+
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=2)
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
+                                  num_workers=self.config.num_workers)
+        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
+                                 num_workers=self.config.num_workers)
         return train_loader, test_loader
-    
-    def get_all_dataloaders(self):
+        
+    def get_all_tasks_dataloaders(self):
         """Get dataloaders for all tasks."""
         return [
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
