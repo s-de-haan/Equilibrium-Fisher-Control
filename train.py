@@ -7,6 +7,7 @@ from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
 from src.datasets import SplitMNIST
+from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST
 from src.trainers import WandBTrainerCL
 from src.utils import str2bool
 
@@ -87,7 +88,8 @@ def main():
     wandb.init(project="continual_learning_baselines", config=OmegaConf.to_container(config))
     
     model = get_model(config.method, config)
-    tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
+    # tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
+    tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
     trainer = WandBTrainerCL(model, tasks_dataloaders, config)
     trainer.train()
 

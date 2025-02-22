@@ -8,33 +8,32 @@ import numpy as np
 # Base dataset class (handles image conversion)
 
 class BaseMNISTDataset(Dataset):
-    def __init__(self, data, targets, classes, transform=None):
-        self.data = data  # Tensor of shape (N, 28, 28)
-        self.targets = targets  # Targets (remapped or original)
+    def __init__(self, device, data, targets, classes, transform=None):
+        self.data = data  # Move data to specified device
+        self.targets = targets
         self.classes = classes  # Classes present in this task
         self.transform = transform
+        self.device = device 
         
     def __len__(self):
         return len(self.data)
     
-    # def _one_hot_encode(self, targets):
-    #     return torch.eye(len(self.classes))[targets]
-
     def _one_hot_encode(self, target):
-        """Convert a scalar target to one-hot encoding based on self.classes."""
-        # Map target to index in self.classes
-        # target_idx = self.classes.index(target.item() if torch.is_tensor(target) else target)
-        # return torch.eye(len(self.classes))[target_idx]
         target_idx = target.item() if torch.is_tensor(target) else target
         return torch.eye(len(self.classes))[target_idx]
     
     def __getitem__(self, idx):
-        img = self.data[idx]  # Tensor of shape (28, 28)
-        img = Image.fromarray(img.numpy(), mode='L')  # Convert to PIL Image (grayscale)
-        target = self._one_hot_encode(self.targets[idx])
+        # Fetch data on CPU
+        img = self.data[idx]  # Tensor of shape (28, 28), on CPU
+        target = self.targets[idx]  # Scalar tensor, on CPU
+        # Convert to PIL Image (works on CPU)
+        img = Image.fromarray(img.numpy(), mode='L')
+        # Apply transform and move to device
         if self.transform:
-            img = self.transform(img)
-        img = img.view(28 * 28)
+            img = self.transform(img)  # Returns tensor (1, 28, 28)
+        # One-hot encode and move to device
+        target = self._one_hot_encode(target)
+        img = img.view(28 * 28)  # Flatten, still on device
         return img, target
 
 # Task Incremental Learning class
@@ -43,7 +42,7 @@ class TaskILMNIST:
         self.num_tasks = 5
         self.config = config
         self.batch_size = self.config.batch_size
-        self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.classes_per_task = 2
         self.transform = transforms.Compose([
             transforms.ToTensor(),
@@ -83,9 +82,9 @@ class TaskILMNIST:
         one_hot_classes = list(range(self.classes_per_task))  # [0, 1] for 2 classes
 
         # Create datasets
-        train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, one_hot_classes, self.transform)
-        test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, one_hot_classes, self.transform)
-        
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform)
+
         try:
             generator = torch.Generator(device=self.device)
         except RuntimeError:
@@ -94,9 +93,9 @@ class TaskILMNIST:
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
+                                  num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+                                 num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
         
         return train_loader, test_loader
     
@@ -144,24 +143,25 @@ class DomainILMNIST:
         ])
         
         # Create datasets (no label remapping)
-        train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, task_classes, transform)
-        test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, task_classes, transform)
-        
-        try:
-            generator = torch.Generator(device=self.device)
-        except RuntimeError:
-            # Fallback to CPU generator if device generator not supported
-            generator = torch.Generator(device='cpu')
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform)
 
         # Create dataloaders
         # train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
         #                           num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
         # test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
         #                          num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        try:
+            generator = torch.Generator(device=self.device)
+        except RuntimeError:
+            # Fallback to CPU generator if device generator not supported
+            generator = torch.Generator(device='cpu')
+        # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
+                                  num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+                                 num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        
 
         return train_loader, test_loader
     
@@ -215,9 +215,9 @@ class ClassILMNIST:
         even_odd_classes = [0, 1]
 
         # No label remapping (keep original labels)
-        train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, even_odd_classes, self.transform)
-        test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, even_odd_classes, self.transform)
-        
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, even_odd_classes, self.transform)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, even_odd_classes, self.transform)
+
         try:
             generator = torch.Generator(device=self.device)
         except RuntimeError:
@@ -226,9 +226,10 @@ class ClassILMNIST:
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
+                                  num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+                                 num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        
         return train_loader, test_loader
         
     def get_all_tasks_dataloaders(self):
