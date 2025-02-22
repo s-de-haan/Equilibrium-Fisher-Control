@@ -1,0 +1,62 @@
+method: grid
+metric:
+  goal: maximize
+  name: final_avg_accuracy
+parameters:
+  alpha_di:
+    distribution: categorical
+    values:
+      - 0.0001
+      - 0.001
+  batch_size:
+    distribution: categorical
+    values:
+      - 64
+      - 128
+      - 256
+  beta_efc:
+    distribution: categorical
+    values:
+      - 1
+      - 5
+      - 10
+  importance_ewc:
+    distribution: categorical
+    values:
+      - 0.1
+      - 1
+      - 10
+  lr:
+    distribution: categorical
+    values:
+      - 1.5e-06
+      - 3e-06
+      - 5e-06
+      - 1e-05
+      - 0.0001
+  method:
+    distribution: categorical
+    values:
+      - bp
+      - dfc
+      - ewc
+      - efc
+  optimizer:
+    distribution: categorical
+    values:
+      - Adam
+      - SGD
+  seed:
+    distribution: categorical
+    values:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+  target_lr:
+    distribution: categorical
+    values:
+      - 0.001
+      - 0.01
+program: train.py

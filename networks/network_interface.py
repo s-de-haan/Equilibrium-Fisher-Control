@@ -61,16 +61,17 @@ class JacobianInterface:
             self._inversion = self._non_dynamical_inversion
         else:
             self._inversion = self._dynamical_inversion
-            self.dt = config.dt_di
+            self.dt = float(config.dt_di)
             self.apical_time_constant = self.dt
             self.time_constant_ratio = config.time_constant_ratio
             self.k_p = config.k_p
             self.tmax = config.tmax_di
-            self.eps = config.eps
+            self.eps = float(config.eps)
 
             assert self.k_p > 0
             assert self.apical_time_constant > 0
             assert self.eps > 0
+
 
         if config.loss_fn == "mse":
             self._compute_error = self._compute_error_mse
@@ -83,8 +84,10 @@ class JacobianInterface:
         for i, layer in enumerate(self.layers):
             layer.tau = config.taus[i]
 
-        self.target_lr = config.target_lr
-        self.alpha = config.alpha_di
+        self.target_lr = float(config.target_lr)
+        self.alpha = float(config.alpha_di)
+
+        assert self.alpha > 0
 
     def backward(self, y):
         self._set_targets(y)
@@ -106,8 +109,17 @@ class JacobianInterface:
         self.output_size = self.targets.shape[1]
 
     def _set_targets_ce(self, y):
-        """ CE loss solution """
-        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
+        """CE loss solution: ensure targets are one-hot floats."""
+        # First, cast y to float if needed.
+        if y.dtype != torch.float32:
+            y = y.float()
+        # If y is not already one-hot (i.e. its last dimension does not match y_hat), convert it.
+        if y.dim() == 1 or (y.dim() == 2 and y.shape[1] != self.y_hat.shape[1]):
+            y = torch.nn.functional.one_hot(y.to(torch.long), num_classes=self.y_hat.shape[1]).float()
+        # Ensure target_lr is a float (in case it came in as a string)
+        tlr = float(self.target_lr)
+        soft = self._softmax(self.y_hat)
+        self.targets = soft - tlr * (soft - y)
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):
