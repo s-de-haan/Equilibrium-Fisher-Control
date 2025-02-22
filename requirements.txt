@@ -1,4 +1,5 @@
 annotated-types==0.7.0
+antlr4-python3-runtime==4.9.3
 certifi==2025.1.31
 charset-normalizer==3.4.1
 click==8.1.8
@@ -26,6 +27,7 @@ nvidia-cusparselt-cu12==0.6.2
 nvidia-nccl-cu12==2.21.5
 nvidia-nvjitlink-cu12==12.4.127
 nvidia-nvtx-cu12==12.4.127
+omegaconf==2.3.0
 pillow==11.1.0
 platformdirs==4.3.6
 protobuf==5.29.3
@@ -42,6 +44,7 @@ sympy==1.13.1
 torch==2.6.0
 torchaudio==2.6.0
 torchvision==0.21.0
+tqdm==4.67.1
 triton==3.2.0
 typing_extensions==4.12.2
 urllib3==2.3.0
