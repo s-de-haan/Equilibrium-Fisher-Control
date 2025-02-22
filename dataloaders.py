@@ -215,8 +215,8 @@ class ClassILMNIST:
         even_odd_classes = [0, 1]
 
         # No label remapping (keep original labels)
-        train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, task_classes, self.transform)
-        test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, task_classes, self.transform)
+        train_dataset = BaseMNISTDataset(train_task_data, train_task_targets, even_odd_classes, self.transform)
+        test_dataset = BaseMNISTDataset(test_task_data, test_task_targets, even_odd_classes, self.transform)
         
         try:
             generator = torch.Generator(device=self.device)
