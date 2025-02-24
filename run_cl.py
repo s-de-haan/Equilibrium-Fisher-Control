@@ -11,28 +11,27 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 400, 400, 2],
-        "lr": 1.5e-6,
+        "lr": 1e-5,
         "batch_size": 128,
-        "epochs": 20,
+        "epochs": 10,
         "mode": "di",  # or "di"
         "num_workers": 8,
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:5",
+        "device": "cuda:7",
         "output_dir": "./outputs",
         "seed": 1337,
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
         "taus": [0.01, 0.008, 0.006],
-        "dt_di": 0.008,  # dynamical inversion params
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
         "k_p": 2.0,
         "eps": 1e-4, # there is an interplay between dt_di and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 5.0, # efc params
+        "beta_efc": 4.0, # efc params
     }
     config = dotdict(config)
 

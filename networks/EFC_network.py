@@ -6,7 +6,7 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, mReLU, Softplus, config, name)
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
@@ -56,9 +56,10 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 # Apical with teaching signal and Fisher modulation
                 psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                    scaling_factor = torch.abs(psi).mean()
-                    gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                # if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                #     scaling_factor = torch.abs(psi).mean()
+                #     gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                    # torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
 
                 e_psi_gamma = torch.exp(psi + gamma)
 
@@ -101,6 +102,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                     gamma += base_gamma
                     fisher_norm += self._fisher[full_name]**2
         
-        gamma = self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+        gamma = - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
         
         return gamma

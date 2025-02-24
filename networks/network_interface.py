@@ -54,6 +54,9 @@ class Network(nn.Module):
     def calculate_loss(self, y_hat, y):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
+    
+    def complete_task(self, dataloader):
+        pass
 
 class JacobianInterface:
     def __init__(self, config):
@@ -88,7 +91,6 @@ class JacobianInterface:
 
     def backward(self, y):
         self._set_targets(y)
-        # print("Targets", self.targets)
         self._inversion()
 
         for layer in self.layers:
