@@ -21,6 +21,11 @@ def get_model(model_name: str, config):
     }
     return models[model_name](config)
 
+# def get_loss(scenario):
+#     """Get loss function based on model name."""
+#     if scenario == "class":
+#         return nn.CrossEntropyLoss()
+    
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
     # Network architecture & training hyperparameters:
@@ -36,14 +41,12 @@ def parse_args():
                         help="whether to train with cross entropy ('ce') or mean squared error ('mse') loss")
     parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
     parser.add_argument("--scheduler", type=str, default="CosineAnnealingLR", help="Scheduler")
-    
     # Environment settings hyperparameters
     parser.add_argument("--device", type=str, default="cuda", help="GPU/CPU device")
     parser.add_argument("--output_dir", type=str, default="./outputs",
                         help="Output directory for saving training and evaluation logs")
     parser.add_argument("--seed", type=int, default=1337, help="Random seed")
     parser.add_argument("--save", type=str2bool, default="false", help="Whether to save the model (true/false)")
-    
     # EFC-specific hyperparameters:
     parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
     parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
@@ -63,7 +66,7 @@ def parse_args():
     parser.add_argument("--tmax_di", type=int, default=500, help="tmax for dynamic inversion")
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
     parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check")
-    
+    parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -88,8 +91,7 @@ def main():
     wandb.init(project="continual_learning_baselines", config=OmegaConf.to_container(config))
     
     model = get_model(config.method, config)
-    # tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
-    tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
+    tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
     trainer = WandBTrainerCL(model, tasks_dataloaders, config)
     trainer.train()
 

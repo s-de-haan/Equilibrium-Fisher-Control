@@ -69,7 +69,6 @@ class MNIST:
             pin_memory=True,
             shuffle=False,
         )
-
         return train_loader, test_loader
 
 
