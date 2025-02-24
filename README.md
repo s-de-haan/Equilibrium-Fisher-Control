@@ -1,4 +1,6 @@
-# Getting Started
+# Equilibrium Fisher Control 
+
+## Getting Started
 
 This project uses:
 - **Python:** 3.11.9  
