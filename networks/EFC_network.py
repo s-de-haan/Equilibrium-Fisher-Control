@@ -11,6 +11,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
+        self.clamp = config.clamp
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -56,10 +57,11 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 # Apical with teaching signal and Fisher modulation
                 psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-                # if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                #     scaling_factor = torch.abs(psi).mean()
-                #     gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
-                    # torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
+                if self.clamp:
+                    if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                        scaling_factor = torch.abs(psi).mean()
+                        gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                        torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
 
                 e_psi_gamma = torch.exp(psi + gamma)
 

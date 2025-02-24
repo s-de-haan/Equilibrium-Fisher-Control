@@ -19,9 +19,9 @@ def main():
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:7",
+        "device": "cuda",
         "output_dir": "./outputs",
-        "seed": 1337,
+        "seed": 0,
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
         "taus": [0.01, 0.008, 0.006],
