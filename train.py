@@ -48,10 +48,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=1337, help="Random seed")
     parser.add_argument("--save", type=str2bool, default="false", help="Whether to save the model (true/false)")
     # EFC-specific hyperparameters:
+    parser.add_argument("--clamp", type=str2bool, default="false", help="Whether to clamp")
     parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
     parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
-    parser.add_argument("--taus", type=float, nargs='+', default=[0.01, 0.008, 0.006], help="tau parameters")
+    parser.add_argument("--tau", type=float, default=0.008, help="tau parameter")
     
     # EWC-specific hyperparameters:
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")

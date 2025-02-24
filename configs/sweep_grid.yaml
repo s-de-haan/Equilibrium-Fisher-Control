@@ -9,23 +9,21 @@ parameters:
       - 0.0001
       - 0.001
   batch_size:
-    distribution: categorical
-    values:
-      - 64
-      - 128
-      - 256
+    value: 256
   beta_efc:
     distribution: categorical
     values:
       - 1
+      - 2.5
       - 5
+      - 7.5
       - 10
-  importance_ewc:
+  eps:
     distribution: categorical
     values:
-      - 0.1
-      - 1
-      - 10
+      - 1e-03
+      - 1e-04
+      - 2e-04
   lr:
     distribution: categorical
     values:
@@ -33,14 +31,10 @@ parameters:
       - 3e-06
       - 5e-06
       - 1e-05
-      - 0.0001
+      - 5e-05
+      - 1e-04
   method:
-    distribution: categorical
-    values:
-      - bp
-      - dfc
-      - ewc
-      - efc
+    value: efc
   optimizer:
     distribution: categorical
     values:
@@ -54,9 +48,17 @@ parameters:
       - 3
       - 4
       - 5
+  tau:
+    distribution: categorical
+    values:
+      - 0.002
+      - 0.008
+      - 0.016
+      - 0.032
   target_lr:
     distribution: categorical
     values:
-      - 0.001
-      - 0.01
+      - 1e-04
+      - 1e-03
+      - 2e-03
 program: train.py

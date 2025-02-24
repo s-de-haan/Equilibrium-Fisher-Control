@@ -54,6 +54,9 @@ class Network(nn.Module):
     def calculate_loss(self, y_hat, y):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
+    
+    def complete_task(self, dataloader):
+        pass
 
 class JacobianInterface:
     def __init__(self, config):
@@ -81,8 +84,8 @@ class JacobianInterface:
             self._set_targets = self._set_targets_ce
             self._softmax = nn.Softmax(dim=1)
 
-        for i, layer in enumerate(self.layers):
-            layer.tau = config.taus[i]
+        # for i, layer in enumerate(self.layers):
+        #     layer.tau = config.taus[i]
 
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
@@ -91,7 +94,6 @@ class JacobianInterface:
 
     def backward(self, y):
         self._set_targets(y)
-        # print("Targets", self.targets)
         self._inversion()
 
         for layer in self.layers:
@@ -109,17 +111,8 @@ class JacobianInterface:
         self.output_size = self.targets.shape[1]
 
     def _set_targets_ce(self, y):
-        """CE loss solution: ensure targets are one-hot floats."""
-        # First, cast y to float if needed.
-        if y.dtype != torch.float32:
-            y = y.float()
-        # If y is not already one-hot (i.e. its last dimension does not match y_hat), convert it.
-        if y.dim() == 1 or (y.dim() == 2 and y.shape[1] != self.y_hat.shape[1]):
-            y = torch.nn.functional.one_hot(y.to(torch.long), num_classes=self.y_hat.shape[1]).float()
-        # Ensure target_lr is a float (in case it came in as a string)
-        tlr = float(self.target_lr)
-        soft = self._softmax(self.y_hat)
-        self.targets = soft - tlr * (soft - y)
+        """ CE loss solution """
+        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):

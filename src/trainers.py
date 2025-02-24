@@ -314,6 +314,7 @@ class TrainerCL(TrainerInterface):
 
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
+            self._set_optimizer()
 
         if self.save:
             self._save_model()
