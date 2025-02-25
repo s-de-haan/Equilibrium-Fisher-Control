@@ -8,12 +8,13 @@ import numpy as np
 # Base dataset class (handles image conversion)
 
 class BaseMNISTDataset(Dataset):
-    def __init__(self, device, data, targets, classes, transform=None):
+    def __init__(self, device, data, targets, classes, transform=None, setting = None):
         self.data = data  # Move data to specified device
         self.targets = targets
         self.classes = classes  # Classes present in this task
         self.transform = transform
         self.device = device 
+        self.setting = setting
         
     def __len__(self):
         return len(self.data)
@@ -49,11 +50,6 @@ class TaskILMNIST:
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
         ])
-        try:
-            self.generator = torch.Generator(device=self.device)
-        except RuntimeError:
-            # Fallback to CPU generator if device generator not supported
-            self.generator = torch.Generator(device='cpu')
         
     def _load_data(self):
         train_dataset = torchvision.datasets.MNIST(root='./data', train=True, download=True)
@@ -90,13 +86,11 @@ class TaskILMNIST:
         train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform)
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform)
 
-        
-
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers, generator=self.generator.manual_seed(self.config.seed))
+                                  num_workers=self.config.num_workers)
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers, generator=self.generator.manual_seed(self.config.seed))
+                                 num_workers=self.config.num_workers)
         
         return train_loader, test_loader
     
@@ -107,7 +101,8 @@ class TaskILMNIST:
         ]
 
 # Class Incremental Learning class
-class ClassILMNIST:
+
+class DomainILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
         self.config = config
@@ -146,20 +141,8 @@ class ClassILMNIST:
         # Create datasets (no label remapping)
         train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform)
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform)
-
-        # Create dataloaders
-        # train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-        #                           num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
-        # test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-        #                          num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
-        try:
-            generator = torch.Generator(device=self.device)
-        except RuntimeError:
-            # Fallback to CPU generator if device generator not supported
-            generator = torch.Generator(device='cpu')
-        # Create dataloaders
         
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
                                   num_workers=self.config.num_workers)
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
                                  num_workers=self.config.num_workers)
@@ -172,7 +155,7 @@ class ClassILMNIST:
         ]
 
 # Domain Incremental Learning class
-class DomainILMNIST:
+class ClassILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
         self.config = config
@@ -205,30 +188,19 @@ class DomainILMNIST:
         train_task_targets = self.train_targets[train_mask]
         test_task_data = self.test_data[test_mask]
         test_task_targets = self.test_targets[test_mask]
-
-        # Remap labels to [0, 1] based on even/odd parity
-        # Even = 0, Odd = 1
-        train_task_targets = torch.tensor([0 if t.item() % 2 == 0 else 1 for t in train_task_targets])
-        test_task_targets = torch.tensor([0 if t.item() % 2 == 0 else 1 for t in test_task_targets])
         
-        # Use [0, 1] as classes for even/odd classification
-        even_odd_classes = [0, 1]
+        # Define all possible classes (0-9) for one-hot encoding consistency
+        all_classes = list(range(10))
 
         # No label remapping (keep original labels)
-        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, even_odd_classes, self.transform)
-        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, even_odd_classes, self.transform)
-
-        # try:
-        #     generator = torch.Generator(device=self.device)
-        # except RuntimeError:
-        #     # Fallback to CPU generator if device generator not supported
-        generator = torch.Generator(device='cpu')
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting = "class")
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting = "class")
 
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
+                                  num_workers=self.config.num_workers)
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers, generator=generator.manual_seed(self.config.seed))
+                                 num_workers=self.config.num_workers)
         
         return train_loader, test_loader
         
