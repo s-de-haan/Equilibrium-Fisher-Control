@@ -12,6 +12,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         
         self.beta = config.beta_efc
         self.clamp = config.clamp
+        self.tau = config.tau
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -66,7 +67,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 e_psi_gamma = torch.exp(psi + gamma)
 
                 # Soma with modulation
-                tau = layer.tau # self.dt / self.time_constant_ratio
+                tau = self.tau # self.dt / self.time_constant_ratio
                 v_current[i] += tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
 
                 layer.activation_fn.set_m(e_psi_gamma)
