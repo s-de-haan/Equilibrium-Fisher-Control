@@ -1,0 +1,4 @@
+Usage: wandb agent [OPTIONS] SWEEP_ID
+Try 'wandb agent --help' for help.
+
+Error: Got unexpected extra argument (output.log)
