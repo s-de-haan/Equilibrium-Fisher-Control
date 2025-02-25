@@ -1,0 +1,31 @@
+method: grid
+metric:
+  goal: maximize
+  name: final_avg_accuracy
+parameters:
+  batch_size:
+    value: 256
+    value: 128
+  lr:
+    distribution: categorical
+    values:
+      - 1e-06
+      - 5e-06
+      - 1e-05
+      - 5e-05
+      - 1e-04
+      - 5e-04
+      - 1e-03
+      - 5e-03
+  method:
+    value: bp
+  optimizer:
+    distribution: categorical
+    values:
+      - Adam
+  seed:
+    distribution: categorical
+    values:
+      - 42
+      - 69
+program: train.py
