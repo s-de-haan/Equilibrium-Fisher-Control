@@ -24,7 +24,8 @@ def main():
         "seed": 0,
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
-        "taus": [0.01, 0.008, 0.006],
+        "tau": 0.008,
+        "dt_di": 0.008,
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
         "k_p": 2.0,

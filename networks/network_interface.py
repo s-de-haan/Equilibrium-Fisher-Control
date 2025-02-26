@@ -189,3 +189,18 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
+
+    def _compute_fisher_modulation(self, layer, i):
+        """Compute Fisher-based modulation for parameter preservation"""
+        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weights' in n:
+                    gamma += (layer.r_previous @ base_gamma.T)
+                elif 'bias' in n:
+                    gamma += base_gamma
+        
+        return - self.beta * gamma 

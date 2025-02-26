@@ -86,24 +86,88 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             layer.r_ff = layer.activation_fn(v_ff_current[i])
             layer.r_prev = rs[i]
             rs.append(r_current[i])
-    
 
-    def _compute_fisher_modulation(self, layer, i):
-        """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
-        fisher_norm = 0.0
 
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
-                if 'weights' in n:
-                    gamma += (layer.r_previous @ base_gamma.T)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
-                elif 'bias' in n:
-                    gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
+class EFC_BP_network(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_BP_network"):
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+        FisherInterface.__init__(self)
         
-        gamma = - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+        self.beta = config.beta_efc
+        self.tau = config.tau
         
-        return gamma
+    def _dynamical_inversion(self):
+        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
+
+        # Initialize activations
+        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+
+        for i, layer in enumerate(self.layers):
+            v_ff_current[i] = layer.linear_activations
+            v_current[i] = layer.linear_activations
+            r_current[i] = layer.activations
+            layer.activation_fn.reset_m()
+
+        # Initialize psi parameters (with gradients enabled)
+        psi_params = []
+        for i, layer in enumerate(self.layers):
+            psi = torch.zeros((self.bzs, layer.weights.shape[0]), requires_grad=True)
+            psi_params.append(psi)
+        
+        optimizer = torch.optim.Adam(psi_params, lr=self.dt)
+
+        converged_mask = torch.zeros(self.bzs, dtype=torch.bool)
+        prev_loss = torch.full((self.bzs,), float('inf'))
+
+        for t in range(self.tmax - 1):
+            # Stop if all batch elements have converged
+            if converged_mask.all():
+                break
+            
+            optimizer.zero_grad()
+            
+            # Forward pass with current psi values
+            for i, layer in enumerate(self.layers):
+                r_prev = r_current[i-1] if i > 0 else self.input
+                
+                v_ff = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                
+                # Compute e_psi_gamma
+                psi = psi_params[i]
+                gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
+                e_psi_gamma = torch.exp(psi + gamma)
+                
+                # Integrate soma potential with modulation
+                v_current[i] += self.tau * (e_psi_gamma * v_ff - v_current[i])
+                
+                # Compute activation with modulation
+                r_current[i] = layer.activation_fn(v_current[i])
+                v_ff_current[i] = v_ff
+                
+                layer.activation_fn.set_m(e_psi_gamma)
+                layer.r_previous = r_prev
+            
+            # Compute error between current output and target
+            error = self._compute_error(r_current[-1], self.targets)
+            loss = torch.sum(torch.norm(error, dim=1))
+            
+            current_loss = torch.norm(error, dim=1)
+            converged_mask |= torch.abs(current_loss - prev_loss) < self.eps
+            prev_loss = current_loss.detach()
+            
+            # Backpropagate to compute gradients for psi parameters
+            if not converged_mask.all():
+                loss.backward()
+                optimizer.step()
+
+        # Steady-state values per layer - save final values
+        rs = [self.input]
+
+        for i, layer in enumerate(self.layers):
+            layer.r = r_current[i]
+            layer.r_ff = layer.activation_fn(v_ff_current[i])
+            layer.r_prev = rs[i]
+            rs.append(r_current[i])
