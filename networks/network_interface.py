@@ -65,14 +65,12 @@ class JacobianInterface:
         else:
             self._inversion = self._dynamical_inversion
             self.dt = config.dt_di
-            self.apical_time_constant = self.dt
             self.time_constant_ratio = config.time_constant_ratio
             self.k_p = config.k_p
             self.tmax = config.tmax_di
             self.eps = config.eps
 
             assert self.k_p > 0
-            assert self.apical_time_constant > 0
             assert self.eps > 0
 
         if config.loss_fn == "mse":

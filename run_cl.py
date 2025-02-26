@@ -11,7 +11,7 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 400, 400, 2],
-        "lr": 1e-5,
+        "lr": 1e-4,
         "batch_size": 128,
         "epochs": 10,
         "mode": "di",  # or "di"
@@ -25,6 +25,8 @@ def main():
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
         "taus": [0.01, 0.008, 0.006],
+        "time_constant_ratio": 0.2, # this param can be merged with dt_di
+        "dt_di": 0.008,  # dynamical inversion params
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
         "k_p": 2.0,
