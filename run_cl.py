@@ -19,12 +19,13 @@ def main():
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:7",
+        "device": "cuda",
         "output_dir": "./outputs",
-        "seed": 1337,
+        "seed": 0,
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
-        "taus": [0.01, 0.008, 0.006],
+        "tau": 0.008,
+        "dt_di": 0.008,
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "dt_di": 0.008,  # dynamical inversion params
         "time_constant_ratio": 0.2, # this param can be merged with dt_di

@@ -1,3 +1,5 @@
+.DS_store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -164,3 +166,9 @@ cython_debug/
 /data
 data/
 /data/
+
+# WandB
+wandb/
+
+# Outputs folder
+outputs/

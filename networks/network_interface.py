@@ -64,14 +64,16 @@ class JacobianInterface:
             self._inversion = self._non_dynamical_inversion
         else:
             self._inversion = self._dynamical_inversion
-            self.dt = config.dt_di
+            self.dt = float(config.dt_di)
+            self.apical_time_constant = self.dt
             self.time_constant_ratio = config.time_constant_ratio
             self.k_p = config.k_p
             self.tmax = config.tmax_di
-            self.eps = config.eps
+            self.eps = float(config.eps)
 
             assert self.k_p > 0
             assert self.eps > 0
+
 
         if config.loss_fn == "mse":
             self._compute_error = self._compute_error_mse
@@ -84,8 +86,10 @@ class JacobianInterface:
         for i, layer in enumerate(self.layers):
             layer.tau = config.taus[i]
 
-        self.target_lr = config.target_lr
-        self.alpha = config.alpha_di
+        self.target_lr = float(config.target_lr)
+        self.alpha = float(config.alpha_di)
+
+        assert self.alpha > 0
 
     def backward(self, y):
         self._set_targets(y)
@@ -184,3 +188,18 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
+
+    def _compute_fisher_modulation(self, layer, i):
+        """Compute Fisher-based modulation for parameter preservation"""
+        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weights' in n:
+                    gamma += (layer.r_previous @ base_gamma.T)
+                elif 'bias' in n:
+                    gamma += base_gamma
+        
+        return - self.beta * gamma 
