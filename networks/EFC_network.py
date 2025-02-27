@@ -88,7 +88,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-
 class EFC_BP_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_BP_network"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)

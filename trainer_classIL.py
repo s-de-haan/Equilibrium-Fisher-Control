@@ -6,6 +6,7 @@ from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
+from networks.EFC_network import EFC_BP_network
 from src.datasets import SplitMNIST
 from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST
 from src.trainers import WandBTrainerCL
@@ -46,7 +47,7 @@ def parse_args():
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")
     
     # Training method: ewc, efc, or bp.
-    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc"],
+    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "efc_bp"],
                         help="Training method to use")
     
     # Additional parameters as needed:
@@ -55,6 +56,7 @@ def parse_args():
     parser.add_argument("--tmax_di", type=int, default=500, help="tmax for dynamic inversion")
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
     parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
+    parser.add_argument("--psi_lr", type=float, default=0.1, help="Learning rate for psi")
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -68,7 +70,8 @@ def get_model(model_name: str, config):
         "bp": BP_network,
         "dfc": DFC_network,
         "ewc": EWC_network,
-        "efc": EFC_network
+        "efc": EFC_network,
+        "efc_bp": EFC_BP_network,
     }
     return models[model_name](config)
 

@@ -11,6 +11,10 @@ Please follow the instructions below to install the required dependencies, initi
 
 ---
 
+So its the EFC_BP_Network, and what you will see is that there is no more alpha_di, no more tau, and no more target_lr.
+
+Now we have lr=0.001 for comparison purposes and to ensure no underfitting. We need to sweep over psi_lr, beta, eps (which now should be no less than 1e-3)
+
 ## Installation
 
 1. **Set Up a Virtual Environment:**  
