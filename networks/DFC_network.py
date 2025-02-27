@@ -83,10 +83,10 @@ class DFC_network(Network, JacobianInterface):
             
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
-                r_previous = r_current[i - 1] if i != 0 else self.input
+                r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal and apical
-                v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 v_fb_current[i] = torch.bmm((u_next).unsqueeze(1), Js[i]).squeeze()
 
                 # Soma with apical
@@ -190,10 +190,10 @@ class DFC_Mult_network(Network, JacobianInterface):
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
-                r_previous = r_current[i - 1] if i != 0 else self.input
+                r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal
-                v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 
                 # Apical
                 e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
