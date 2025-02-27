@@ -1,0 +1,64 @@
+method: grid
+metric:
+  goal: maximize
+  name: final_avg_accuracy
+parameters:
+  num_workers:
+    value: 0
+  alpha_di:
+    distribution: categorical
+    values:
+      - 0.0001
+      - 0.001
+  batch_size:
+    value: 256
+  beta_efc:
+    distribution: categorical
+    values:
+      - 0.1
+      - 1
+      - 10
+      - 100
+      - 1000
+  lr:
+    distribution: categorical
+    values:
+      - 1e-06
+      - 1e-05
+      - 1e-04
+      - 1e-03
+  method:
+    value: efc
+  optimizer:
+    distribution: categorical
+    values:
+      - Adam
+  seed:
+    distribution: categorical
+    values:
+      - 69
+      - 42
+      - 6969
+      - 4242
+  tau:
+    distribution: categorical
+    values:
+      - 1e-3
+      - 1e-2
+      - 5e-2
+      - 1e-1
+      - 5e-1
+  eps:
+    distribution: categorical
+    values:
+      - 1e-01
+      - 1e-02
+      - 1e-03
+  target_lr:
+    distribution: categorical
+    values:
+      - 1e-03
+      - 1e-02
+      - 1e-01
+      - 1
+program: trainer_classIL.py
