@@ -11,30 +11,29 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 400, 400, 2],
-        "lr": 1e-4,
-        "batch_size": 128,
-        "epochs": 10,
+        "lr": 1e-3,
+        "batch_size": 256,
+        "epochs": 20,
         "mode": "di",  # or "di"
         "num_workers": 8,
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda",
+        "device": "cuda:1",
         "output_dir": "./outputs",
         "seed": 0,
-        "target_lr": 1e-2, # needs to be < time_constant_ratio
+        "target_lr": 1.0, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
-        "tau": 0.008,
-        "dt_di": 0.008,
+        "tau": 0.08,
+        "dt_di": 0.001,
+        "psi_lr": 0.1,
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
-        "dt_di": 0.008,  # dynamical inversion params
-        "time_constant_ratio": 0.2, # this param can be merged with dt_di
-        "tmax_di": 500,
+        "tmax_di": 1000,
         "k_p": 2.0,
-        "eps": 1e-4, # there is an interplay between dt_di and eps
+        "eps": 1e-2, # there is an interplay between dt_di and eps and between target_lr and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 4.0, # efc params
+        "beta_efc": 1000, # efc params
     }
     config = dotdict(config)
 
@@ -42,7 +41,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = EFC_network(config=config)
+    model = EFC_BP_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

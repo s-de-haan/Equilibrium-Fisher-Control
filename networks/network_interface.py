@@ -54,9 +54,7 @@ class Network(nn.Module):
     def calculate_loss(self, y_hat, y):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
-    
-    def complete_task(self, dataloader):
-        pass
+
 
 class JacobianInterface:
     def __init__(self, config):
@@ -74,7 +72,6 @@ class JacobianInterface:
             assert self.k_p > 0
             assert self.eps > 0
 
-
         if config.loss_fn == "mse":
             self._compute_error = self._compute_error_mse
             self._set_targets = self._set_targets_mse
@@ -83,9 +80,7 @@ class JacobianInterface:
             self._set_targets = self._set_targets_ce
             self._softmax = nn.Softmax(dim=1)
 
-        for i, layer in enumerate(self.layers):
-            layer.tau = config.taus[i]
-
+        self.tau = config.tau
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
 
@@ -155,7 +150,7 @@ class FisherInterface:
             # Log likelihood computation
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
-            probs = torch.exp(log_probs)
+            # probs = torch.exp(log_probs)
             # log_likelihood = (log_probs * probs).sum(dim=1)
 
             # Can also calculate log likelihood with targets possibly TODO double check what to use
@@ -188,18 +183,40 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
+        
 
     def _compute_fisher_modulation(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+        gamma = torch.zeros((layer.weights.shape[0]))
+        fisher_norm = 0.0
 
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'
             if p.requires_grad:
                 base_gamma = self._fisher[full_name] * (p - self._means[full_name])
                 if 'weights' in n:
-                    gamma += (layer.r_previous @ base_gamma.T)
+                    gamma += torch.sum(base_gamma, dim=1)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)                    
                 elif 'bias' in n:
                     gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
         
-        return - self.beta * gamma 
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+    
+    def _compute_fisher_modulation_with_activity(self, layer, i):
+        """Compute Fisher-based modulation for parameter preservation"""
+        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+        fisher_norm = 0.0
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weights' in n:
+                    gamma += (layer.r_prev @ base_gamma.T)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
+                elif 'bias' in n:
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+        
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
