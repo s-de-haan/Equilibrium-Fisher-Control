@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from networks.layers import *
+
 class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
@@ -54,6 +56,90 @@ class Network(nn.Module):
     def calculate_loss(self, y_hat, y):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
+
+class EFC_CNN_network(nn.Module):
+    def __init__(self, activation_fn, out_activation_fn, config, name="EFC_CNN_network"):
+        """
+        Initialize the EFC CNN network based on the paper's architecture.
+        
+        Args:
+            config: Configuration object with attributes like in_channels, num_classes, device, etc.
+            name: Name of the network (default: "EFC_CNN_network").
+        """
+        super().__init__()
+
+        # Define activation functions for compatibility with base Network
+        self.activation_fn = activation_fn  # Used in modules
+        self.out_activation_fn = out_activation_fn  # No activation before softmax (handled by loss)
+        
+        # Additional config attributes specific to CNN
+        self.in_channels = config.in_channels  # e.g., 1 for grayscale, 3 for RGB
+        self.num_classes = config.num_classes  # Number of output classes
+        
+        # Create the network architecture
+        self.create_network()
+
+
+    def create_network(self):
+        """
+        Build the CNN architecture: 4 conv modules + 1 FC layer, with separate BN layers.
+        From: Vinyals et al. "Matching Networks for One Shot Learning" (2017)
+        Args:
+            config: Configuration object.
+        """
+        self.layers = nn.ModuleList()  # Layers for EFC modulation (conv and FC)
+        self.bn_layers = nn.ModuleList()  # BatchNorm layers, not modulated
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Input channels for the first layer
+        current_channels = self.in_channels
+        
+        # 4 Convolutional Modules
+        for i in range(4):
+            conv_layer = EFC_Conv_layer(
+                in_channels=current_channels,
+                out_channels=64,
+                kernel_size=3,
+                stride=1,
+                padding=0,
+                activation_fn=self.activation_fn()
+            )
+            bn_layer = nn.BatchNorm2d(64)
+            self.layers.append(conv_layer)
+            self.bn_layers.append(bn_layer)
+            current_channels = 64
+        
+        # Fully Connected Layer
+        self.layers.append(
+            nn.Linear(64, self.num_classes)
+        )
+    def forward(self, x):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x (Tensor): Input tensor of shape [batch_size, in_channels, 28, 28].
+        
+        Returns:
+            Tensor: Output tensor of shape [batch_size, num_classes].
+        """
+        self.input = x
+        self.bzs = x.shape[0]
+        
+        # Process through 4 convolutional modules
+        for i in range(4):  # 4 modules
+            conv_layer = self.layers[i]
+            bn_layer = self.bn_layers[i]
+            x = conv_layer(x)  # Convolution + ReLU
+            x = bn_layer(x)    # Batch normalization
+            x = self.pool(x)   # Max-pooling after each module
+        
+        # Flatten and apply final FC layer
+        x = x.view(self.bzs, -1)  # [batch_size, 64]
+        x = self.layers[-1](x)    # [batch_size, num_classes]
+        
+        self.y_hat = x
+        return x
 
 
 class JacobianInterface:
@@ -201,7 +287,7 @@ class FisherInterface:
                     gamma += base_gamma
                     fisher_norm += self._fisher[full_name]**2
         
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8) # TODO removed beta put it back
     
     def _compute_fisher_modulation_with_activity(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
@@ -219,4 +305,36 @@ class FisherInterface:
                     gamma += base_gamma
                     fisher_norm += self._fisher[full_name]**2
         
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+    
+    def _compute_fisher_modulation_conv(self, layer, i):
+        """
+        Compute Fisher-based modulation for convolutional layers.
+        
+        Args:
+            layer: The convolutional layer (e.g., an EFC_Conv_layer instance).
+            i (int): Layer index in the network.
+        
+        Returns:
+            torch.Tensor: Modulation term gamma with shape [out_channels].
+        """
+        out_channels = layer.out_channels  # Number of output channels
+        gamma = torch.zeros(out_channels)  # Shape: [out_channels]
+        fisher_norm = torch.zeros(out_channels)  # Shape: [out_channels]
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad and full_name in self._fisher:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weight' in n:
+                    # Weights shape: [out_channels, in_channels, kernel_h, kernel_w]
+                    # base_gamma shape: [out_channels, in_channels, kernel_h, kernel_w]
+                    gamma += base_gamma.sum(dim=(1, 2, 3))  # Sum over in_channels and kernel dims
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=(1, 2, 3))
+                elif 'bias' in n:
+                    # Bias shape: [out_channels]
+                    # base_gamma shape: [out_channels]
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+
         return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
