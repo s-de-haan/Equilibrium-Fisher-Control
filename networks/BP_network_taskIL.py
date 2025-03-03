@@ -101,13 +101,13 @@ class TaskIncrementalBP_network(Network):
         for task_id in self.trained_tasks:
             self.output_heads[task_id].freeze()
     
-    def complete_task(self, task_id):
+    def complete_task_and_freeze_output_head(self, task_id):
         """Mark a task as completed and freeze its output head"""
         self.trained_tasks.add(task_id)
         self.output_heads[task_id].freeze()
     
     def backward(self, _):
-        self.loss.backward()
+        self.loss.backward() 
     
     def get_trainable_parameters(self):
         """Get parameters that should be trained for the current task"""

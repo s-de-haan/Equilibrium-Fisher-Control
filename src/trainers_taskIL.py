@@ -16,7 +16,6 @@ from src.callbacks import (
     ProgressBarCallback,
     TrainingCallback,
 )
-from torchsummary import summary
 from src.utils import dotdict
 
 logger = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ logger = logging.getLogger(__name__)
 ## This can be done within ths same file, as long as I just add some 
 ## kind of if statement to check which of the TrainerInterface._train_step I apply
 ## e.g. if I'm in a taskIL setting, I apply the taskIL version of _train_step
-
 
 class TrainerInterfaceTaskIL:
     def __init__(self, model, config, callbacks=None):
@@ -37,7 +35,6 @@ class TrainerInterfaceTaskIL:
 
         self._set_device(self.device)
         self.model.to(self.device)
-        summary(self.model)
 
         self._prepare_training()
 
@@ -198,7 +195,7 @@ class TrainerInterfaceTaskIL:
             self.callback_handler.on_train_step_end(training_config=self.config)
 
         epoch_loss /= len(self.train_loader)
-        self.model.complete_task(task_id)
+        self.model.complete_task_and_freeze_output_head(task_id)
         return epoch_loss
     
     @torch.no_grad()
