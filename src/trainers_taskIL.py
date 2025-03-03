@@ -16,12 +16,18 @@ from src.callbacks import (
     ProgressBarCallback,
     TrainingCallback,
 )
+from torchsummary import summary
 from src.utils import dotdict
 
 logger = logging.getLogger(__name__)
 
 
-class TrainerInterface:
+## This can be done within ths same file, as long as I just add some 
+## kind of if statement to check which of the TrainerInterface._train_step I apply
+## e.g. if I'm in a taskIL setting, I apply the taskIL version of _train_step
+
+
+class TrainerInterfaceTaskIL:
     def __init__(self, model, config, callbacks=None):
         self.model = model
         self.config = config
@@ -31,6 +37,7 @@ class TrainerInterface:
 
         self._set_device(self.device)
         self.model.to(self.device)
+        summary(self.model)
 
         self._prepare_training()
 
@@ -157,50 +164,21 @@ class TrainerInterface:
     def train(self):
         raise NotImplementedError("train must be implemented in a subclass.")
 
-    def _train_step(self, epoch: int):
+    def _train_step(self, epoch: int, task_id: int):
         self.callback_handler.on_train_step_begin(
             training_config=self.config,
             train_loader=self.train_loader,
             epoch=epoch,
         )
 
+        # Set current task
+        self.model.set_task(task_id)
+        
+        # Freeze previous task output heads
+        self.model.freeze_previous_tasks()
         self.model.train()
 
         epoch_loss = 0
-
-        for X, y in self.train_loader:
-            X = X.to(self.device)
-            y = y.to(self.device)
-
-            y_hat = self.model(X)
-            loss = self.model.calculate_loss(y_hat, y)
-
-            self.optimizer.zero_grad()
-            self.model.backward(y)
-            self.optimizer.step()
-
-            epoch_loss += loss.item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in train loss")
-
-            self.callback_handler.on_train_step_end(training_config=self.config)
-
-        epoch_loss /= len(self.train_loader)
-
-        return epoch_loss
-    
-    def _train_step_taskIL(self, epoch: int, task_id: int):
-        self.callback_handler.on_train_step_begin(
-            training_config=self.config,
-            train_loader=self.train_loader,
-            epoch=epoch,
-        )
-
-        self.model.train()
-
-        epoch_loss = 0
-
         for X, y in self.train_loader:
             X = X.to(self.device)
             y = y.to(self.device)
@@ -220,11 +198,11 @@ class TrainerInterface:
             self.callback_handler.on_train_step_end(training_config=self.config)
 
         epoch_loss /= len(self.train_loader)
-
+        self.model.complete_task(task_id)
         return epoch_loss
     
     @torch.no_grad()
-    def _test_step(self, epoch):
+    def _test_step(self, epoch, task_id):
         self.callback_handler.on_test_step_begin(
             training_config=self.config,
             test_loader=self.test_loader,
@@ -234,12 +212,13 @@ class TrainerInterface:
         epoch_loss = 0
         total = 0
         correct = 0
+        self.model.eval()
 
         for X, y in self.test_loader:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            y_hat = self.model(X)
+            y_hat = self.model(X, task_id)
 
             loss = self.model.loss_fn(y_hat, y)
 
@@ -257,46 +236,7 @@ class TrainerInterface:
 
         return epoch_loss, accuracy
     
-
-class Trainer(TrainerInterface):
-    def __init__(self, model, train_loader, test_loader, config, callbacks=None):
-        super().__init__(model, config, callbacks)
-        self.train_loader = train_loader
-        self.test_loader = test_loader
-
-    def train(self):
-        self.callback_handler.on_train_begin(training_config=self.config)
-        metrics = dotdict()
-
-        for epoch in range(1, self.config.epochs + 1):
-            self.callback_handler.on_epoch_begin(
-                training_config=self.config,
-                epoch=epoch,
-                train_loader=self.train_loader,
-                test_loader=self.test_loader,
-            )
-
-            epoch_train_loss = self._train_step(epoch)
-            metrics.epoch_train_loss = epoch_train_loss
-
-            if self.test_loader is not None:
-                epoch_test_loss, accuracy = self._test_step(epoch)
-                metrics.epoch_test_loss = epoch_test_loss
-                metrics.accuracy = accuracy
-
-            self.callback_handler.on_epoch_end(training_config=self.config)
-            self.callback_handler.on_log(
-                self.config,
-                metrics,
-                logger=logger,
-                epoch=epoch,
-            )
-
-        if self.save:
-            self._save_model()
-            
-
-class TrainerCL(TrainerInterface):
+class TrainerCL(TrainerInterfaceTaskIL):
     def __init__(self, model, tasks_dataloaders, config, callbacks=None):
         super().__init__(model, config, callbacks)
         self.tasks_dataloaders = tasks_dataloaders
@@ -323,11 +263,11 @@ class TrainerCL(TrainerInterface):
                     test_loader=self.test_loader
                 )
 
-                epoch_train_loss = self._train_step(epoch)
+                epoch_train_loss = self._train_step(epoch, task_id)
                 metrics.epoch_train_loss = epoch_train_loss
 
                 if self.test_loader is not None:
-                    epoch_test_loss, accuracy = self._test_step(epoch)
+                    epoch_test_loss, accuracy = self._test_step(epoch, task_id)
                     metrics.epoch_test_loss = epoch_test_loss
                     metrics.accuracy = accuracy
 
@@ -348,6 +288,7 @@ class TrainerCL(TrainerInterface):
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
             self._set_optimizer()
+
         if self.save:
             self._save_model()
 
@@ -362,14 +303,14 @@ class TrainerCL(TrainerInterface):
                 epoch=task_id,
             )
 
-            epoch_test_loss, accuracy = self._test_step(0)
+            epoch_test_loss, accuracy = self._test_step(0, task_id)
             
             logger.info(
                 f"Task {task_id + 1} - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
             )
 
 
-class WandBTrainerCL(TrainerCL):
+class WandBTrainerCLTaskIL(TrainerCL):
     def __init__(self, model, tasks_dataloaders, config):
         super().__init__(model, tasks_dataloaders, config)
         self.task_accuracies = []
@@ -383,19 +324,18 @@ class WandBTrainerCL(TrainerCL):
                 metrics = {f"task_{task_id}/{k}": v for k, v in metrics.items()}
             wandb.log(metrics, step=step)
 
-    def _train_step(self, epoch: int) -> float:
+    def _train_step(self, epoch: int, task_id) -> float:
         """Single training step with WandB logging."""
         # Perform training step (callbacks still receive the local epoch if needed)
-        epoch_loss = super()._train_step(epoch)
+        epoch_loss = super()._train_step(epoch, task_id)
         # Log training loss using the global step counter
         self._log_metrics({"train/loss": epoch_loss}, self.global_step)
         self.global_step += 1  # Increment the global step after each training epoch
-        print('printing from train_step', self.global_step)
         return epoch_loss
 
-    def _test_step(self, step: int) -> tuple:
+    def _test_step(self, step: int, task_id) -> tuple:
         """Single test step with WandB logging."""
-        epoch_loss, accuracy = super()._test_step(step)
+        epoch_loss, accuracy = super()._test_step(step, task_id)
         self._log_metrics({
             "test/loss": epoch_loss,
             "test/accuracy": accuracy
@@ -416,8 +356,7 @@ class WandBTrainerCL(TrainerCL):
             )
 
             # Use the current global_step for testing logging
-            print('printing from test_seen_tasks', self.global_step)
-            epoch_test_loss, accuracy = self._test_step(self.global_step)
+            epoch_test_loss, accuracy = self._test_step(self.global_step, task_id)
             task_accuracies.append(accuracy)
 
             # Log per-task test metrics using the current global step
