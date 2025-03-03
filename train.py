@@ -21,7 +21,7 @@ def parse_args():
     # Network architecture & training hyperparameters:
     parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
                         help="Network layer sizes (e.g., 784 400 400 2)")
-    parser.add_argument("--lr", type=float, default=1.5e-6, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],

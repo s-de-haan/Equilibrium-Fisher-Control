@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--save", type=str2bool, default="false", help="Whether to save the model (true/false)")
     # EFC-specific hyperparameters:
     parser.add_argument("--clamp", type=str2bool, default="false", help="Whether to clamp")
-    parser.add_argument("--lr", type=float, default=1.5e-6, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
     parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
