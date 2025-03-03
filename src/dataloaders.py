@@ -87,7 +87,7 @@ class TaskILMNIST:
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform)
 
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
                                   num_workers=self.config.num_workers)
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
                                  num_workers=self.config.num_workers)
