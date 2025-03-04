@@ -11,8 +11,7 @@ class DFC_layer(Layer):
     def backward(self):
         teaching_signal = self.r - self.r_ff
 
-        bsz = self.r_prev.shape[0]
-        self._weights.grad = -2.0 * 1.0 / bsz * teaching_signal.t().mm(self.r_prev)
+        self._weights.grad = -2 / self.r_prev.shape[0] * teaching_signal.t().mm(self.r_prev)
         self._bias.grad = -2 * teaching_signal.mean(dim=0)
 
 

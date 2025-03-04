@@ -3,6 +3,7 @@ import torch
 from networks.network_interface import *
 from networks.layers import *
 from networks.activation_function import *
+from networks.optimizers import PIOptimizer
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
@@ -97,99 +98,58 @@ class EFC_BP_network(Network, JacobianInterface, FisherInterface):
         self.beta = config.beta_efc
         self.psi_lr = config.psi_lr
         self.inner_loss_fn = nn.CrossEntropyLoss(reduction='sum')
+        self.alpha_psi = config.alpha_psi
         
     def _dynamical_inversion(self):
-        # Get layer output dimensions
-        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
-
-        # Initialize state tensors with requires_grad=True for gradient tracking
-        v_ff_current = [torch.zeros((self.bzs, lod), requires_grad=True) for lod in layer_out_dims]
-        v_current = [torch.zeros((self.bzs, lod), requires_grad=True) for lod in layer_out_dims]
-        r_current = [torch.zeros((self.bzs, lod), requires_grad=True) for lod in layer_out_dims]
-
-        # Set initial values from layer states (detached to avoid linking to prior graphs)
-        for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.linear_activations.detach().clone().requires_grad_()
-            v_current[i] = layer.linear_activations.detach().clone().requires_grad_()
-            r_current[i] = layer.activations.detach().clone().requires_grad_()
-
         # Initialize psi_params for each layer
-        psi_params = [torch.zeros((self.bzs, layer.weights.shape[0]), requires_grad=True)
-                    for layer in self.layers]
-
-        # Compute gamma (modulation) for each layer
-        gammas = [self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-                for i, layer in enumerate(self.layers)]
-
-        # Set up optimizer for psi_params
-        optimizer = torch.optim.SGD(psi_params, lr=self.psi_lr)
+        psi_params = [torch.zeros((self.bzs, layer.weights.shape[0]), requires_grad=True) for layer in self.layers]
+        optimizers = [torch.optim.SGD([psi_params[i]], lr=self.psi_lr[i]) for i, _ in enumerate(self.layers)]
 
         # Convergence tracking
         converged_mask = torch.zeros(self.bzs, dtype=torch.bool)
-        psi_prev = [psi.detach().clone() for psi in psi_params]
+        prev_psi_l2 = torch.ones(self.bzs)
 
         # Iterative optimization
         for t in range(self.tmax - 1):
+            # Reset optimizers
+            for optimizer in optimizers:
+                optimizer.zero_grad()
+
+            # Forward pass: Compute activations layer by layer
+            for i, layer in enumerate(self.layers):
+                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+
+                layer.r_ff = layer.activation_fn(layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0))  # Nonlinear activation
+                
+                psi = psi_params[i]
+                e_psi_gamma = torch.tanh(psi) + 1
+                
+                layer.r = e_psi_gamma * layer.r_ff
+
+            # Compute loss at the output and Backpropagate and update gradients
+            psi_l2 = torch.sum(torch.stack([torch.sum(psi ** 2, dim=1) for psi in psi_params]), dim=0)
+            task_loss = self.inner_loss_fn(self.layers[-1].r, self.targets)
+            loss = task_loss + 0.5 * self.alpha_psi * psi_l2.sum()
+
+            loss.backward(retain_graph=True) # TODO does gamma need a graph?
+            for optimizer in optimizers:
+                optimizer.step()
+
+            if not self._first_task:
+                print(torch.max(psi_params[-1]), torch.max(psi_params[-1].grad))
+
+            # Check convergence
+            norm_diff = torch.abs(psi_l2 - prev_psi_l2)
+            converged_mask |= norm_diff < self.eps
+            prev_psi_l2 = psi_l2
+
             if converged_mask.all():
                 break
 
-            # Clear gradients
-            optimizer.zero_grad()
-
-            # Forward pass: Compute activations layer by layer
-            r_prev = self.input
-            for i, layer in enumerate(self.layers):
-                # Feedforward computation
-                v_ff = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-
-                # Modulation term with psi and gamma
-                psi = psi_params[i]
-                gamma = gammas[i]
-                e_psi_gamma = torch.tanh(psi + gamma) + 1
-
-                # Update v_current using the current v_ff
-                v_current_new = v_current[i] + 0.00001 * (e_psi_gamma * v_ff - v_current[i])
-                v_current[i] = v_current_new
-
-                # Compute modulated activation
-                r_current[i] = e_psi_gamma * layer.activation_fn(v_current[i])
-
-                # Set r_prev for the next layer
-                r_prev = r_current[i]
-
-            # Compute loss at the output
-            loss = self.inner_loss_fn(r_current[-1], self.targets)
-
-            # Backpropagate gradients
-            loss.backward(retain_graph=True)
-            for i, psi_ in enumerate(psi_params):
-                print(f"Layer {i}: {psi_.grad}")
-            err
-
-            # Update psi_params
-            optimizer.step()
-
-            # Check convergence
-            psi_changes = [torch.norm(psi - psi_prev[i], dim=1) for i, psi in enumerate(psi_params)]
-            max_psi_change = torch.stack(psi_changes).max()
-            converged_mask |= max_psi_change < self.eps
-
-            # Update psi_prev for next iteration
-            psi_prev = [psi.detach().clone() for psi in psi_params]
-
-            # Detach state variables for the next iteration to reset dynamics
-            for i in range(len(self.layers)):
-                v_current[i] = v_current[i].detach().requires_grad_()
-                v_ff_current[i] = v_ff_current[i].detach().requires_grad_()
-                r_current[i] = r_current[i].detach().requires_grad_()
-
-        # Store final steady-state values in layers
-        rs = [self.input]
-        for i, layer in enumerate(self.layers):
-            layer.r = r_current[i].detach().clone()
-            layer.r_ff = layer.activation_fn(v_ff_current[i]).detach().clone()
-            layer.r_prev = rs[i]
-            rs.append(layer.r)
+        if self._first_task:
+            print(t, torch.min(psi).item(), torch.max(psi).item())
+        else:
+            print(t, torch.min(psi).item(), torch.max(psi).item())#, torch.min(penalty).item(), torch.max(penalty).item())
     
     # def _dynamical_inversion(self):
     #     layer_out_dims = [layer.weights.shape[0] for layer in self.layers]

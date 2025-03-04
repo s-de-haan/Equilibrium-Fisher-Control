@@ -13,27 +13,28 @@ def main():
         "layers": [784, 400, 400, 2],
         "lr": 1e-3,
         "batch_size": 256,
-        "epochs": 3,
+        "epochs": 4,
         "mode": "di",  # or "di"
         "num_workers": 8,
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:5",
+        "device": "cuda:4",
         "output_dir": "./outputs",
         "seed": 0,
-        "target_lr": 1.0, # needs to be < time_constant_ratio
+        "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-4,
         "tau": 0.08,
         "dt_di": 0.001,
-        "psi_lr": 0.00001,
+        "psi_lr": [0.05,0.05,0.001],
+        "alpha_psi": 0.0,
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
         "k_p": 2.0,
-        "eps": 0.0000001, # there is an interplay between dt_di and eps and between target_lr and eps
+        "eps": 1e-4, # there is an interplay between dt_di and eps and between target_lr and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 1000, # efc params
+        "beta_efc": 0.0, # efc params
     }
     config = dotdict(config)
 
