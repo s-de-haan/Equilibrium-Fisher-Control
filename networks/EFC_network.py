@@ -130,6 +130,69 @@ class EFC_network_v2(Network, JacobianInterface, FisherInterface):
                 break
             u_current = u_next
 
+
+class EFC_network_v3(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_network"):
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+        FisherInterface.__init__(self)
+        
+        self.beta = config.beta
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        u_current = torch.zeros((self.bzs, self.output_size))
+        u_int = torch.zeros((self.bzs, self.output_size))
+
+        for t in range(1, self.tmax):
+            error = self._compute_error(self.layers[-1].r, self.targets)
+            
+            # Proportional and integral (PI) control
+            u_int = u_int + self.dt * (error - self.alpha * u_current)
+            u_next = u_int + self.k_p * error
+
+            psis = self._calculate_psis(u_next)
+
+            # Forward pass
+            for i, layer in enumerate(self.layers):
+                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                layer.r_ff = layer.activation_fn(layer.v_ff)
+
+                psi = psis[i]
+                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
+
+                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
+                layer.activation_fn.set_modulation(layer.r / (layer.r_ff + 1e-8))
+
+            # Compute convergence check
+            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+            if converged_mask.all():
+                break
+            u_current = u_next
+        
+        print(t)
+        
+    @torch.no_grad()
+    def _calculate_psis(self, u_next):
+        L = len(self.layers)
+        psi_list = [None] * L
+
+        # Derivatives per layer
+        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
+        
+        # Last layer
+        psi = u_next * activations_derivatives[-1]
+        psi_list[-1] = psi
+        
+        # Backward from second-to-last to first
+        for i in range(L - 2, -1, -1):
+            psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
+            psi_list[i] = psi
+        
+        return psi_list
         
 
 class EFC_BP_network(Network, JacobianInterface, FisherInterface):

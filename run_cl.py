@@ -42,7 +42,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = EFC_network_v2(config=config)
+    model = EFC_network_v3(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()
