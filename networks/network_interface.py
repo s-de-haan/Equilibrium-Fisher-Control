@@ -20,11 +20,11 @@ class Network(nn.Module):
 
     @property
     def activations(self):
-        return [layer.activations for layer in self.layers]
+        return [layer.r for layer in self.layers]
 
     @property
     def linear_activations(self):
-        return [layer.linear_activations for layer in self.layers]
+        return [layer.v_ff for layer in self.layers]
 
     def forward(self, x):
         self.input = x
@@ -178,6 +178,7 @@ class JacobianInterface:
 
         for layer in self.layers:
             layer.backward()
+            layer.activation_fn.reset_modulation()
 
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
@@ -201,7 +202,7 @@ class JacobianInterface:
         output_size = self.layer_sizes[-1]
 
         activations_derivatives = [
-            layer.activation_derivative(layer.linear_activations)
+            layer.activation_derivative(layer.v_ff)
             for layer in self.layers
         ]
 
@@ -289,32 +290,9 @@ class FisherInterface:
                     fisher_norm += self._fisher[full_name]**2
     
         return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-    
-    def _compute_fisher_terms(self, layer, i):
-        gamma = torch.zeros(layer.weights.shape[0])
-        fisher_norm = torch.zeros(layer.weights.shape[0])
-        fisher_norm_squared = torch.zeros(layer.weights.shape[0])
-        
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                fisher = self._fisher[full_name]
-                base_gamma = fisher * (p - self._means[full_name])
-                if 'weights' in n:
-                    gamma += torch.sum(base_gamma, dim=1)
-                    fisher_norm += torch.sum(fisher, dim=1)
-                    fisher_norm_squared += torch.sum(fisher ** 2, dim=1)
-                elif 'bias' in n:
-                    gamma += base_gamma
-                    fisher_norm += fisher
-                    fisher_norm_squared += fisher ** 2
-
-        gamma = - self.beta * gamma / (torch.sqrt(fisher_norm_squared) + 1e-8)
-        
-        return gamma, fisher_norm, fisher_norm_squared
 
     
-    def _compute_fisher_modulation_with_activity(self, layer, i):
+    def _compute_gamma(self, layer, i):
         """Compute Fisher-based modulation for parameter preservation"""
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
 
@@ -328,21 +306,7 @@ class FisherInterface:
                     gamma += base_gamma
         
         return - self.beta * gamma
-    
-    def _compute_modulation_and_penalty(self, layer, i, psi):
-        """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
 
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
-                if 'weights' in n:
-                    gamma += (layer.r_prev @ base_gamma.T)
-                elif 'bias' in n:
-                    gamma += base_gamma
-        
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
     
     def _compute_fisher_modulation_conv(self, layer, i):
         """

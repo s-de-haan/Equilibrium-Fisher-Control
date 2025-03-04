@@ -41,56 +41,56 @@ class Linear(ActivationFunction):
 class mLinear(ActivationFunction):
     def __init__(self):
         super().__init__()
-        self.m = torch.tensor(1)
+        self.modulation = torch.tensor(1)
 
-    def set_m(self, m):
-        self.m = m
+    def set_modulation(self, modulation):
+        self.modulation = modulation
 
     def reset_m(self):
-        self.m = torch.tensor(1)
+        self.modulation = torch.tensor(1)
 
     def forward(self, x):
         return x
 
     def derivative(self, x):
-        return torch.ones_like(x) * self.m
+        return torch.ones_like(x) * self.modulation
 
 
 class mReLU(ActivationFunction):
     def __init__(self):
         super().__init__()
-        self.m = torch.tensor(1)
+        self.modulation = torch.tensor(1)
 
-    def set_m(self, m):
-        self.m = m
+    def set_modulation(self, modulation):
+        self.modulation = modulation
 
-    def reset_m(self):
-        self.m = torch.tensor(1)
+    def reset_modulation(self):
+        self.modulation = torch.tensor(1)
 
     def forward(self, x):
         return x.clamp(min=0)
 
     def derivative(self, x):
-        grad = torch.ones_like(x) * self.m
+        grad = torch.ones_like(x) * self.modulation
         grad[x < 0] = 0
         return grad
     
 class Softplus(ActivationFunction):
     def __init__(self):
         super().__init__()
-        self.m = torch.tensor(1)
+        self.modulation = torch.tensor(1)
         self.beta = 5
         self.softplus = nn.Softplus(beta=self.beta)
         self.sigmoid = nn.Sigmoid()
     
-    def set_m(self, m):
-        self.m = m
+    def set_modulation(self, modulation):
+        self.modulation = modulation
 
-    def reset_m(self):
-        self.m = torch.tensor(1)
+    def reset_modulation(self):
+        self.modulation = torch.tensor(1)
 
     def forward(self, x):
         return self.softplus(x)
     
     def derivative(self, x):
-        return self.sigmoid(self.beta * x) * self.m
+        return self.sigmoid(self.beta * x) * self.modulation

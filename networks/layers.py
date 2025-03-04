@@ -56,8 +56,8 @@ class EFC_Conv_layer(nn.Module):
         self.r_prev = x
         a = self.conv(x)
         self.linear_activations = a
-        self.activations = self.activation_fn(a)
-        return self.activations
+        self.r = self.activation_fn(a)
+        return self.r
     
     def backward(self):
         teaching_signal = self.r - self.r_ff  # Shape: [batch_size, out_channels, height_out, width_out]
