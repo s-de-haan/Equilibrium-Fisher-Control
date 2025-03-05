@@ -89,7 +89,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
 
 class EFC_network_v2(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network"):
+    def __init__(self, config, name="EFC_network_v2"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
@@ -132,7 +132,7 @@ class EFC_network_v2(Network, JacobianInterface, FisherInterface):
 
 
 class EFC_network_v3(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network"):
+    def __init__(self, config, name="EFC_network_v3"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
