@@ -34,7 +34,8 @@ def main():
         "eps": 1e-3, # there is an interplay between dt_di and eps and between target_lr and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta": 0.0, # efc params
+        "beta_efc": 5.0, # efc params
+        "fisher_normalization": False,
     }
     config = dotdict(config)
 
