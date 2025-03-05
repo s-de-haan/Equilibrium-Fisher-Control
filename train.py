@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
     parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check")
     parser.add_argument("--psi_lr", type=float, default=0.5, help="Learning rate for psi")
-    parser.add_argument("--fisher_normalization", type=bool, default=True, help="EFC Normalization")
+    parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="EFC Normalization")
     parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
     parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
     

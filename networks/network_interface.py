@@ -295,7 +295,6 @@ class FisherInterface:
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
         
         fisher_norm = 0.0
-        fisher_norm = 0.0
 
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'
@@ -304,10 +303,8 @@ class FisherInterface:
                 if 'weights' in n:
                     gamma += (layer.r_prev @ base_gamma.T)
                     fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
                 elif 'bias' in n:
                     gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
                     fisher_norm += self._fisher[full_name]**2
         
         if normalize:

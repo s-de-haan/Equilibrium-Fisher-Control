@@ -61,4 +61,4 @@ parameters:
     values:
       - 1e-02
       - 5e-02
-program: trainer_classIL.py
+program: train.py
