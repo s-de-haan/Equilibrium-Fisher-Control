@@ -184,11 +184,54 @@ class TrainerInterface:
             if epoch_loss != epoch_loss:
                 raise ArithmeticError("NaN detected in train loss")
 
+            ### Test for task A at every step to measure the stability gap
+            if self.config.stability_gap:
+                epoch_test_loss, accuracy = self._test_step_stability_gap(epoch)
+                metrics = {"task_1_loss_stability_gap": epoch_test_loss, "task_1_accuracy_stability_gap": accuracy}
+                wandb.log(metrics)
+                
+            
             self.callback_handler.on_train_step_end(training_config=self.config)
+
 
         epoch_loss /= len(self.train_loader)
 
         return epoch_loss
+    
+    @torch.no_grad()
+    def _test_step_stability_gap(self, epoch):
+        self.callback_handler.on_test_step_begin(
+            training_config=self.config,
+            test_loader=self.test_loader,
+            epoch=epoch,
+        )
+
+        epoch_loss = 0
+        total = 0
+        correct = 0
+
+        for X, y in self.test_loader_first_task:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            y_hat = self.model(X)
+
+            loss = self.model.loss_fn(y_hat, y)
+
+            epoch_loss += loss.item()
+            total += y.size(0)
+            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in test loss")
+            
+            self.callback_handler.on_test_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.test_loader)
+        accuracy = 100 * correct / total
+
+        return epoch_loss, accuracy
+    
     
     @torch.no_grad()
     def _test_step(self, epoch):
@@ -281,6 +324,9 @@ class TrainerCL(TrainerInterface):
             self.callback_handler.on_task_begin(
                 training_config=self.config, task_id=task_id + 1
             )
+            
+            if task_id == 0:
+                self.test_loader_first_task = test_loader
 
             for epoch in range(1, self.config.epochs + 1):
                 self.callback_handler.on_epoch_begin(
