@@ -41,7 +41,7 @@ class Layer(nn.Module):
     def forward(self, x):
         a = torch.matmul(x, self.weights.t())
         a += self.bias.unsqueeze(0).expand_as(a)
-        self.activations = self.activation_fn(a)
-        self.linear_activations = a
+        self.r = self.activation_fn(a)
+        self.v_ff = a
 
-        return self.activations
+        return self.r
