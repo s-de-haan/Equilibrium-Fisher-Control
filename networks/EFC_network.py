@@ -138,7 +138,8 @@ class EFC_network_v3(Network, JacobianInterface, FisherInterface):
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
-        self.beta = config.beta_efc
+        self.beta = config.beta_efc_efc
+        self.fisher_normalization = config.fisher_normalization
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -162,10 +163,10 @@ class EFC_network_v3(Network, JacobianInterface, FisherInterface):
                 layer.r_ff = layer.activation_fn(layer.v_ff)
 
                 psi = psis[i]
-                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
+                gamma = self._compute_gamma(layer, i, self.fisher_normalization) if not self._first_task else 0.0
                 e_psi_gamma = torch.tanh(psi + gamma) + 1
 
-                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
+                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff - layer.r)
                 layer.activation_fn.set_modulation(layer.r / (layer.r_ff + 1e-8))
 
             # Compute convergence check
@@ -173,6 +174,8 @@ class EFC_network_v3(Network, JacobianInterface, FisherInterface):
             if converged_mask.all():
                 break
             u_current = u_next
+    
+        
         
     @torch.no_grad()
     def _calculate_psis(self, u_next):
