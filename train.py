@@ -7,6 +7,7 @@ from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
 from networks.EFC_network import EFC_BP_network
+from networks.EFC_network import EFC_network_v2, EFC_network_v3 
 from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
 from src.datasets import SplitMNIST
@@ -50,7 +51,7 @@ def parse_args():
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")
     
     # Training method: ewc, efc, or bp.
-    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "efc_bp"],
+    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "efc_bp", "efc_v2", "efc_v3"],
                         help="Training method to use")
     
     # Additional parameters as needed:
@@ -60,6 +61,7 @@ def parse_args():
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
     parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check")
     parser.add_argument("--psi_lr", type=float, default=0.5, help="Learning rate for psi")
+    parser.add_argument("--fisher_normalization", type=bool, default=True, help="EFC Normalization")
     parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
     parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
     
@@ -79,6 +81,8 @@ def get_model(model_name: str, setting: str, config):
             "ewc": EWC_network,
             "efc": EFC_network,
             "efc_bp": EFC_BP_network,
+            "efc_v2": EFC_network_v2,
+            "efc_v3": EFC_network_v3
         }
     elif setting == "taskIL":
         models = {
