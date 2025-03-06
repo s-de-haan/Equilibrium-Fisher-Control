@@ -166,13 +166,7 @@ class JacobianInterface:
             self._set_targets = self._set_targets_ce
             self._softmax = nn.Softmax(dim=1)
 
-<<<<<<< HEAD
-        # for i, layer in enumerate(self.layers):
-        #     layer.tau = config.taus[i]
-
-=======
         self.tau = config.tau
->>>>>>> ccb2bc18bfc387389d30ca671121a462bae70862
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
 
