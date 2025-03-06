@@ -143,8 +143,8 @@ class SplitMNIST:
             dataset=train_dataset,
             batch_size=self.config.batch_size,
             generator=generator.manual_seed(self.config.seed),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
+            # num_workers=self.config.num_workers,
+            # pin_memory=True,
             shuffle=True,
         )
 
@@ -152,8 +152,8 @@ class SplitMNIST:
             dataset=test_dataset,
             batch_size=self.config.batch_size,
             generator=generator.manual_seed(self.config.seed),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
+            # num_workers=self.config.num_workers,
+            # pin_memory=True,
             shuffle=False,
         )
 

@@ -139,7 +139,7 @@ class JacobianInterface:
         psi_list = [None] * L
 
         # Derivatives per layer
-        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
+        activations_derivatives = [layer.activation_derivative(layer.linear_activations) for layer in self.layers]
         
         # Last layer
         psi = u * activations_derivatives[-1]

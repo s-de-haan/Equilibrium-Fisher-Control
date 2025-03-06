@@ -71,7 +71,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
-            psis = _calculate_psis(u_next)
+            psis = self._calculate_psis(u_next)
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
@@ -116,7 +116,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
     def _compute_fisher_modulation(self, layer, i):
         if self._first_task:
             return 0.0
-        """Compute Fisher-based modulation for parameter preservation"""
+        
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
         fisher_norm = 0.0
 

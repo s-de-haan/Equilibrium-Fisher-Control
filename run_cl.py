@@ -15,11 +15,11 @@ def main():
         "batch_size": 256,
         "epochs": 5,
         "mode": "di",  # or "di"
-        "num_workers": 8,
+        "num_workers": 0,
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda",
+        "device": "cuda:2",
         "output_dir": "./outputs",
         "seed": 0,
         "target_lr": 1.0, # needs to be < time_constant_ratio
@@ -35,7 +35,8 @@ def main():
         "beta_efc": 1000.0, # efc params
     }
     config = dotdict(config)
-
+    torch.set_default_device(config.device)
+    print(torch.cuda.is_available())
     # Load data
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
