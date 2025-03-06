@@ -55,8 +55,6 @@ class Network(nn.Module):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
     
-    def complete_task(self, dataloader):
-        pass
 
 class JacobianInterface:
     def __init__(self, config):
@@ -134,6 +132,26 @@ class JacobianInterface:
             )
 
         return torch.cat(Js, dim=2), Js
+    
+    @torch.no_grad()
+    def _calculate_psis(self, u):
+        L = len(self.layers)
+        psi_list = [None] * L
+
+        # Derivatives per layer
+        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
+        
+        # Last layer
+        psi = u * activations_derivatives[-1]
+        psi_list[-1] = psi
+        
+        # Backward from second-to-last to first
+        for i in range(L - 2, -1, -1):
+            psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
+            psi_list[i] = psi
+        
+        return psi_list
+
 
 class FisherInterface:
     def __init__(self):

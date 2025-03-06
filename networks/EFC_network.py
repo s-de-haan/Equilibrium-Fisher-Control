@@ -4,6 +4,32 @@ from networks.network_interface import *
 from networks.layers import DFC_layer
 from networks.activation_function import *
 
+
+"""
+    "layers": [784, 400, 400, 2],
+        "lr": 1e-3,
+        "batch_size": 256,
+        "epochs": 5,
+        "mode": "di",  # or "di"
+        "num_workers": 8,
+        "loss_fn": "ce", # "mse"
+        "optimizer": "Adam",
+        "scheduler": "CosineAnnealingLR",
+        "device": "cuda",
+        "output_dir": "./outputs",
+        "seed": 0,
+        "target_lr": 1.0, # needs to be < time_constant_ratio
+        "alpha_di": 1e-4,
+        "taus": [0.01, 0.008, 0.006],
+        "time_constant_ratio": 0.2, # this param can be merged with dt_di
+        "tmax_di": 500,
+        "dt_di": 0.001,
+        "k_p": 2.0,
+        "eps": 1e-3, # there is an interplay between dt_di and eps
+        "save": False,
+        "importance_ewc": 1.0, # ewc params
+        "beta_efc": 1000.0, # efc params
+"""
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
@@ -11,8 +37,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
-        self.clamp = config.clamp
-        self.tau = config.tau
+        self.tau = config.taus
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -46,7 +71,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
-            _, Js = self._calculate_full_jacobian()
+            psis = _calculate_psis(u_next)
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
@@ -56,21 +81,20 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 v_ff_current[i] = layer.r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
 
                 # Apical with teaching signal and Fisher modulation
-                psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
-                gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-                if self.clamp:
-                    if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                        scaling_factor = torch.abs(psi).mean()
-                        gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
-                        torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
+                psi = psis[i] #= torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
+                gamma = self._compute_fisher_modulation(layer, i) 
+                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                    # scaling_factor = torch.abs(psi).mean()
+                    # gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                    torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
 
-                e_psi_gamma = torch.exp(psi + gamma)
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 # Soma with modulation
-                tau = self.tau # self.dt / self.time_constant_ratio
+                tau = self.tau[i] # self.dt / self.time_constant_ratio
                 v_current[i] += tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
 
-                layer.activation_fn.set_m(e_psi_gamma)
+                # layer.activation_fn.set_m(e_psi_gamma)
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.linear_activations = v_ff_current[i]
@@ -90,6 +114,8 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
     
 
     def _compute_fisher_modulation(self, layer, i):
+        if self._first_task:
+            return 0.0
         """Compute Fisher-based modulation for parameter preservation"""
         gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
         fisher_norm = 0.0
