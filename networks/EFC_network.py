@@ -210,7 +210,9 @@ class EFC_network_v4(Network, JacobianInterface, FisherInterface):
                 layer.r_ff = layer.activation_fn(layer.v_ff)
                 
                 psi = psis[i] # ψ = (J^T u) ⊙ r_ff = diag(r_ff) J^T u
-                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
+                gamma = self._compute_gamma(layer, i)
+                if not self._first_task:
+                    gamma = torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
                 e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
@@ -256,7 +258,10 @@ class EFC_BP_network(Network, JacobianInterface, FisherInterface):
                 layer.r_ff = layer.activation_fn(layer.v_ff)
                 
                 psi = psi_params[i]
-                e_psi = torch.tanh(psi) + 1
+                gamma = self._compute_gamma(layer, i)
+                if not self._first_task:
+                    gamma = torch.clamp(gamma, min=1.1*-torch.abs(psi), max=1.1*torch.abs(psi))
+                e_psi = torch.tanh(psi + gamma) + 1
                 layer.r = e_psi * layer.r_ff
 
             # Compute loss: control effort + output error
@@ -273,10 +278,16 @@ class EFC_BP_network(Network, JacobianInterface, FisherInterface):
 
             # Check convergence based on output error
             if loss_diff < self.eps:
-                print(f"Converged at t={t}, output_error={output_error.item():.4f}")
+                if self._first_task:
+                    print(f"Converged at t={t}, output_error={output_error.item():.4f}", torch.min(psi).item(), torch.max(psi).item())
+                else:
+                    print(f"Converged at t={t}, output_error={output_error.item():.4f}", torch.min(psi).item(), torch.max(psi).item(), torch.min(gamma).item(), torch.max(gamma).item())
                 break
             if t == self.tmax - 1:
-                print(f"Max iterations reached, output_error={output_error.item():.4f}")
+                if self._first_task:
+                    print(f"Max iterations reached, output_error={output_error.item():.4f}", torch.min(psi).item(), torch.max(psi).item())
+                else:
+                    print(f"Max iterations reached, output_error={output_error.item():.4f}", torch.min(psi).item(), torch.max(psi).item(), torch.min(gamma).item(), torch.max(gamma).item())
         
     
     # def _dynamical_inversion(self):

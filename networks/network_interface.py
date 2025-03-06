@@ -326,8 +326,9 @@ class FisherInterface:
 
         # print(layer.r_prev.shape, (F_weights * weight_diff).T.shape, (F_bias * bias_diff).shape, weight_diff.shape, bias_diff.shape)
         gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
 
-        return -self.beta * gamma #/ fisher_norm
+        return -self.beta * gamma / fisher_norm
     
     @torch.no_grad()
     def _compute_expected_update(self, layer):
