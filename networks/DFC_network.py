@@ -87,8 +87,8 @@ class DFC_network(Network, JacobianInterface):
 
                 # Basal and apical
                 v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                v_fb_current[i] = torch.bmm((u_next).unsqueeze(1), Js[i]).squeeze()
-
+                v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
+                
                 # Soma with apical
                 tau = self.dt / self.time_constant_ratio
                 v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i])
@@ -168,7 +168,7 @@ class DFC_Mult_network(Network, JacobianInterface):
             v_ff_current[i] = layer.v_ff
             v_current[i] = layer.v_ff
             r_current[i] = layer.r
-            layer.activation_fn.reset_m()
+            layer.activation_fn.reset_modulation()
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
@@ -204,7 +204,7 @@ class DFC_Mult_network(Network, JacobianInterface):
                 tau = self.dt / self.time_constant_ratio
                 v_current[i] += tau * (e_psi * v_ff_current[i] - v_current[i])
 
-                layer.activation_fn.set_m(e_psi)
+                layer.activation_fn.set_modulation(e_psi)
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.v_ff = v_ff_current[i]
@@ -222,4 +222,46 @@ class DFC_Mult_network(Network, JacobianInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
+"""
+    "layers": [784, 400, 400, 2],
+    "lr": 1e-3,
+    "target_lr": 1.0,
+    "dt_di": 0.0016,
+    "time_constant_ratio": 0.2,
+    "tmax_di": 500,
+    "k_p": 1.0,
+    "eps": 1e-4,
+"""
+class DFC_Mult_network_clean(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_network_v4"):
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
 
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        u_current = torch.zeros((self.bzs, self.output_size))
+
+        for t in range(1, self.tmax):
+            error = self._compute_error(self.layers[-1].r, self.targets)
+            
+            # Proportional control
+            u_next = self.k_p * error
+            psis = self._calculate_psis(u_next)
+
+            # Forward pass
+            for i, layer in enumerate(self.layers):
+                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                layer.r_ff = layer.activation_fn(layer.v_ff)
+                
+                psi = psis[i]
+                e_psi = torch.tanh(psi) + 1
+
+                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi * layer.r_ff - layer.r)
+
+            # Compute convergence check
+            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+            if converged_mask.all():
+                break
+            u_current = u_next

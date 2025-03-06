@@ -7,6 +7,8 @@ from networks.layer_interface import Layer
 class DFC_layer(Layer):
     def __init__(self, in_features, out_features, activation_fn, name="DFC_layer"):
         super(DFC_layer, self).__init__(in_features, out_features, activation_fn, name)
+        self.expected_weight_update = 0.0
+        self.expected_bias_update = 0.0
 
     def backward(self):
         teaching_signal = self.r - self.r_ff

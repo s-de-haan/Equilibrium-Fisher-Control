@@ -4,6 +4,9 @@ from networks.network_interface import *
 from networks.layers import *
 from networks.activation_function import *
 
+"""
+    Original implementation adapted from the DFC_Mult_network with gamma term
+"""
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
@@ -50,7 +53,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
-            _, Js = self._calculate_full_jacobian()
+            psis = self._calculate_psis(u_next)
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
@@ -60,7 +63,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 v_ff_current[i] = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
 
                 # Apical with teaching signal and Fisher modulation
-                psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
+                psi = psis[i] # = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = gammas[i]
 
                 e_psi_gamma = torch.tanh(psi + gamma) + 1
@@ -69,7 +72,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 # tau = layer.tau # self.dt / self.time_constant_ratio
                 v_current[i] += self.tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
 
-                layer.activation_fn.set_modulation(e_psi_gamma)
+                # layer.activation_fn.set_modulation(e_psi_gamma)
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.v_ff = v_ff_current[i]
@@ -87,7 +90,9 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-
+"""
+    Greatly simplified version with correct derivatives
+"""
 class EFC_network_v2(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network_v2"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
@@ -131,6 +136,9 @@ class EFC_network_v2(Network, JacobianInterface, FisherInterface):
             u_current = u_next
 
 
+"""
+    Efficient implementation with implicit Jacobian calculation for scalability
+"""
 class EFC_network_v3(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network_v3"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
@@ -173,27 +181,53 @@ class EFC_network_v3(Network, JacobianInterface, FisherInterface):
             if converged_mask.all():
                 break
             u_current = u_next
-    
-        
-    @torch.no_grad()
-    def _calculate_psis(self, u_next):
-        L = len(self.layers)
-        psi_list = [None] * L
 
-        # Derivatives per layer
-        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
-        
-        # Last layer
-        psi = u_next * activations_derivatives[-1]
-        psi_list[-1] = psi
-        
-        # Backward from second-to-last to first
-        for i in range(L - 2, -1, -1):
-            psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
-            psi_list[i] = psi
-        
-        return psi_list
-        
+
+class EFC_network_v4(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_network_v4"):
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+        FisherInterface.__init__(self)
+
+        self.beta = config.beta_efc
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        u_current = torch.zeros((self.bzs, self.output_size))
+
+        for t in range(1, self.tmax):
+            error = self._compute_error(self.layers[-1].r, self.targets)
+            
+            # Proportional control
+            u_next = self.k_p * error
+            psis = self._calculate_psis(u_next)
+
+            # Forward pass
+            for i, layer in enumerate(self.layers):
+                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                layer.r_ff = layer.activation_fn(layer.v_ff)
+                
+                psi = psis[i] # ψ = (J^T u) ⊙ r_ff = diag(r_ff) J^T u
+                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
+
+                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
+
+            # Compute convergence check
+            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+            if converged_mask.all():
+                break
+            u_current = u_next
+        # err
+        if self._first_task:
+            print(t, torch.min(psi).item(), torch.max(psi).item())
+        else:
+            print(t, torch.min(psi).item(), torch.max(psi).item(), torch.max(gamma).item(), torch.max(gamma).item())
+        # print("error: ",[f"{x:.4f}" for x in error[0].tolist()])
+        # err
+
 
 class EFC_BP_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_BP_network"):
@@ -203,56 +237,47 @@ class EFC_BP_network(Network, JacobianInterface, FisherInterface):
         
         self.beta = config.beta_efc
         self.psi_lr = config.psi_lr
-        self.inner_loss_fn = nn.CrossEntropyLoss(reduction='sum')
         self.alpha_psi = config.alpha_psi
-        
+
     def _dynamical_inversion(self):
-        # Initialize psi_params for each layer
-        psi_params = [torch.zeros((self.bzs, layer.weights.shape[0]), requires_grad=True) for layer in self.layers]
+        # Initialize psi for each layer
+        psi_params = self._calculate_psis(self._compute_error(self.layers[-1].r, self.targets))
+        psi_params = [psi.requires_grad_() for psi in psi_params]
         optimizer = torch.optim.SGD(psi_params, lr=self.psi_lr)
 
-        # Convergence tracking
-        converged_mask = torch.zeros(self.bzs, dtype=torch.bool)
-        prev_psi_l2 = torch.ones(self.bzs)
-
-        # Iterative optimization
-        for t in range(1, self.tmax):
-            # Reset optimizers
+        prev_loss = 1.0
+        for t in range(self.tmax):
             optimizer.zero_grad()
-
-            # Forward pass: Compute activations layer by layer
+            
+            # Forward pass with current psi
             for i, layer in enumerate(self.layers):
                 layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-
-                layer.r_ff = layer.activation_fn(layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0))  # Nonlinear activation
+                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                layer.r_ff = layer.activation_fn(layer.v_ff)
                 
                 psi = psi_params[i]
-                e_psi_gamma = torch.tanh(psi) + 1
-                
-                layer.r = e_psi_gamma * layer.r_ff
+                e_psi = torch.tanh(psi) + 1
+                layer.r = e_psi * layer.r_ff
 
-            # Compute loss at the output and Backpropagate and update gradients
-            psi_l2 = torch.sum(torch.stack([torch.sum(psi ** 2, dim=1) for psi in psi_params]), dim=0)
-            task_loss = self.inner_loss_fn(self.layers[-1].r, self.targets)
-            loss = task_loss + 0.5 * self.alpha_psi * psi_l2.sum()
+            # Compute loss: control effort + output error
+            control_effort = sum(0.5 * (psi ** 2).sum() for psi in psi_params)
+            output_error = ((self._softmax(self.layers[-1].r) - self.targets) ** 2).sum()
+            loss = control_effort + output_error
 
-            loss.backward(retain_graph=True) # TODO does gamma need a graph?
+            # Backpropagate and update
+            loss.backward(retain_graph=True)
             optimizer.step()
 
-            # print(torch.max(psi_params[-1]), torch.max(psi_params[-1].grad))
+            loss_diff = torch.abs(loss - prev_loss)
+            prev_loss = loss
 
-            # Check convergence
-            norm_diff = torch.abs(psi_l2 - prev_psi_l2)
-            converged_mask |= norm_diff < self.eps
-            prev_psi_l2 = psi_l2
-
-            if converged_mask.all():
+            # Check convergence based on output error
+            if loss_diff < self.eps:
+                print(f"Converged at t={t}, output_error={output_error.item():.4f}")
                 break
-
-        # if self._first_task:
-        #     print(t, torch.min(psi).item(), torch.max(psi).item())
-        # else:
-        #     print(t, torch.min(psi).item(), torch.max(psi).item())#, torch.min(penalty).item(), torch.max(penalty).item())
+            if t == self.tmax - 1:
+                print(f"Max iterations reached, output_error={output_error.item():.4f}")
+        
     
     # def _dynamical_inversion(self):
     #     layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
@@ -348,6 +373,86 @@ class EFC_BP_network(Network, JacobianInterface, FisherInterface):
     #         print(t)
     #     else:
     #         print(t, torch.min(gamma).item(), torch.max(gamma).item(), torch.min(psi).item(), torch.max(psi).item())
+
+class EFC_network_combined(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_network_combined"):
+        # Initialize parent classes
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+        FisherInterface.__init__(self)
+        
+        # Configuration parameters
+        self.beta = config.beta_efc          # Fisher regularization strength
+        self.psi_lr = config.psi_lr          # Learning rate for psi
+        self.tau = config.tau                # Time constant for activation updates
+        self.tmax = config.tmax_di              # Maximum iterations
+        self.eps = config.eps                # Convergence threshold
+        self.alpha_psi = config.alpha_psi    # Psi regularization strength
+        self.inner_loss_fn = nn.CrossEntropyLoss(reduction='sum')
+        
+        self.device = config.device
+
+    def _compute_gamma(self, layer, i):
+        """Compute gamma based on Fisher information and parameter deviation."""
+        fisher = self._fisher[f'layers.{i}._weights']
+        theta_star = self._theta_star[f'layers.{i}._weights']
+        deviation = layer.weights - theta_star
+        gamma = -self.beta * (fisher * deviation).sum(dim=1)  # Sum over input features
+
+        return gamma
+
+    def _dynamical_inversion(self):
+        """Perform dynamical inversion to compute psi and reach equilibrium."""
+        # Initialize psi as learnable parameters
+        psi_list = [
+            torch.zeros((self.bzs, layer.out_features), requires_grad=True)
+            for layer in self.layers
+        ]
+        optimizer = torch.optim.SGD(psi_list, lr=self.psi_lr)
+
+        # Track convergence
+        converged_mask = torch.zeros(self.bzs, dtype=torch.bool)
+        prev_psi_l2 = torch.ones(self.bzs)
+
+        # Iterative optimization
+        for t in range(self.tmax):
+            print(t)
+            optimizer.zero_grad()
+
+            # Forward pass with current psi and gamma
+            for i, layer in enumerate(self.layers):
+                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+                layer.v_ff = torch.matmul(layer.r_prev, layer.weights.t()) + layer.bias
+                layer.r_ff = layer.activation_fn(layer.v_ff)
+
+                psi = psi_list[i]
+                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
+
+                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
+
+            # Compute loss
+            output = self.layers[-1].r
+            task_loss = self.inner_loss_fn(output, self.targets)
+            psi_l2 = sum(torch.sum(psi ** 2, dim=1) for psi in psi_list)
+            loss = task_loss + 0.5 * self.alpha_psi * psi_l2.sum()
+
+            # Backpropagate to update psi
+            loss.backward(retain_graph=True)
+            optimizer.step()
+
+            # Check convergence
+            with torch.no_grad():
+                current_psi_l2 = sum(torch.sum(psi ** 2, dim=1) for psi in psi_list)
+                norm_diff = torch.abs(current_psi_l2 - prev_psi_l2)
+                converged_mask |= norm_diff < self.eps
+                prev_psi_l2 = current_psi_l2
+
+            if converged_mask.all():
+                print(f"Converged after {t+1} iterations")
+                err
+                break
+
 
 class EFC_CNN_network(EFC_CNN_network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_CNN_network"):
