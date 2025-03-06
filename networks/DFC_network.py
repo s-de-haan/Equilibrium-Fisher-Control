@@ -58,9 +58,9 @@ class DFC_network(Network, JacobianInterface):
         u_int_current = torch.zeros((self.bzs, self.output_size))
 
         for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.linear_activations
-            v_current[i] = layer.linear_activations
-            r_current[i] = layer.activations
+            v_ff_current[i] = layer.v_ff
+            v_current[i] = layer.v_ff
+            r_current[i] = layer.r
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
@@ -83,10 +83,10 @@ class DFC_network(Network, JacobianInterface):
             
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
-                r_previous = r_current[i - 1] if i != 0 else self.input
+                r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal and apical
-                v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 v_fb_current[i] = torch.bmm((u_next).unsqueeze(1), Js[i]).squeeze()
 
                 # Soma with apical
@@ -94,8 +94,8 @@ class DFC_network(Network, JacobianInterface):
                 v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i])
                 r_current[i] = layer.activation_fn(v_current[i])
 
-                layer.linear_activations = v_current[i]
-                layer.activations = r_current[i]
+                layer.v_ff = v_current[i]
+                layer.r = r_current[i]
 
             u_int_current = u_int_next
             u_current = u_next
@@ -165,9 +165,9 @@ class DFC_Mult_network(Network, JacobianInterface):
         u_int_current = torch.zeros((self.bzs, self.output_size))
 
         for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.linear_activations
-            v_current[i] = layer.linear_activations
-            r_current[i] = layer.activations
+            v_ff_current[i] = layer.v_ff
+            v_current[i] = layer.v_ff
+            r_current[i] = layer.r
             layer.activation_fn.reset_m()
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
@@ -190,10 +190,10 @@ class DFC_Mult_network(Network, JacobianInterface):
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
-                r_previous = r_current[i - 1] if i != 0 else self.input
+                r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal
-                v_ff_current[i] = r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 
                 # Apical
                 e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
@@ -207,8 +207,8 @@ class DFC_Mult_network(Network, JacobianInterface):
                 layer.activation_fn.set_m(e_psi)
                 r_current[i] = layer.activation_fn(v_current[i])
 
-                layer.linear_activations = v_ff_current[i]
-                layer.activations = r_current[i]
+                layer.v_ff = v_ff_current[i]
+                layer.r = r_current[i]
 
             u_int_current = u_int_next
             u_current = u_next

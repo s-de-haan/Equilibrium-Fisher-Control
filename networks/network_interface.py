@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from networks.layers import *
+
 class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
@@ -18,11 +20,11 @@ class Network(nn.Module):
 
     @property
     def activations(self):
-        return [layer.activations for layer in self.layers]
+        return [layer.r for layer in self.layers]
 
     @property
     def linear_activations(self):
-        return [layer.linear_activations for layer in self.layers]
+        return [layer.v_ff for layer in self.layers]
 
     def forward(self, x):
         self.input = x
@@ -54,9 +56,91 @@ class Network(nn.Module):
     def calculate_loss(self, y_hat, y):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
-    
-    def complete_task(self, dataloader):
-        pass
+
+class EFC_CNN_network(nn.Module):
+    def __init__(self, activation_fn, out_activation_fn, config, name="EFC_CNN_network"):
+        """
+        Initialize the EFC CNN network based on the paper's architecture.
+        
+        Args:
+            config: Configuration object with attributes like in_channels, num_classes, device, etc.
+            name: Name of the network (default: "EFC_CNN_network").
+        """
+        super().__init__()
+
+        # Define activation functions for compatibility with base Network
+        self.activation_fn = activation_fn  # Used in modules
+        self.out_activation_fn = out_activation_fn  # No activation before softmax (handled by loss)
+        
+        # Additional config attributes specific to CNN
+        self.in_channels = config.in_channels  # e.g., 1 for grayscale, 3 for RGB
+        self.num_classes = config.num_classes  # Number of output classes
+        
+        # Create the network architecture
+        self.create_network()
+
+
+    def create_network(self):
+        """
+        Build the CNN architecture: 4 conv modules + 1 FC layer, with separate BN layers.
+        From: Vinyals et al. "Matching Networks for One Shot Learning" (2017)
+        Args:
+            config: Configuration object.
+        """
+        self.layers = nn.ModuleList()  # Layers for EFC modulation (conv and FC)
+        self.bn_layers = nn.ModuleList()  # BatchNorm layers, not modulated
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # Input channels for the first layer
+        current_channels = self.in_channels
+        
+        # 4 Convolutional Modules
+        for i in range(4):
+            conv_layer = EFC_Conv_layer(
+                in_channels=current_channels,
+                out_channels=64,
+                kernel_size=3,
+                stride=1,
+                padding=0,
+                activation_fn=self.activation_fn()
+            )
+            bn_layer = nn.BatchNorm2d(64)
+            self.layers.append(conv_layer)
+            self.bn_layers.append(bn_layer)
+            current_channels = 64
+        
+        # Fully Connected Layer
+        self.layers.append(
+            nn.Linear(64, self.num_classes)
+        )
+    def forward(self, x):
+        """
+        Forward pass through the network.
+        
+        Args:
+            x (Tensor): Input tensor of shape [batch_size, in_channels, 28, 28].
+        
+        Returns:
+            Tensor: Output tensor of shape [batch_size, num_classes].
+        """
+        self.input = x
+        self.bzs = x.shape[0]
+        
+        # Process through 4 convolutional modules
+        for i in range(4):  # 4 modules
+            conv_layer = self.layers[i]
+            bn_layer = self.bn_layers[i]
+            x = conv_layer(x)  # Convolution + ReLU
+            x = bn_layer(x)    # Batch normalization
+            x = self.pool(x)   # Max-pooling after each module
+        
+        # Flatten and apply final FC layer
+        x = x.view(self.bzs, -1)  # [batch_size, 64]
+        x = self.layers[-1](x)    # [batch_size, num_classes]
+        
+        self.y_hat = x
+        return x
+
 
 class JacobianInterface:
     def __init__(self, config):
@@ -72,9 +156,7 @@ class JacobianInterface:
             self.eps = float(config.eps)
 
             assert self.k_p > 0
-            assert self.apical_time_constant > 0
             assert self.eps > 0
-
 
         if config.loss_fn == "mse":
             self._compute_error = self._compute_error_mse
@@ -84,9 +166,13 @@ class JacobianInterface:
             self._set_targets = self._set_targets_ce
             self._softmax = nn.Softmax(dim=1)
 
+<<<<<<< HEAD
         # for i, layer in enumerate(self.layers):
         #     layer.tau = config.taus[i]
 
+=======
+        self.tau = config.tau
+>>>>>>> ccb2bc18bfc387389d30ca671121a462bae70862
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
 
@@ -98,6 +184,7 @@ class JacobianInterface:
 
         for layer in self.layers:
             layer.backward()
+            layer.activation_fn.reset_modulation()
 
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
@@ -112,7 +199,8 @@ class JacobianInterface:
 
     def _set_targets_ce(self, y):
         """ CE loss solution """
-        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
+        # self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
+        self.targets = y
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):
@@ -120,7 +208,7 @@ class JacobianInterface:
         output_size = self.layer_sizes[-1]
 
         activations_derivatives = [
-            layer.activation_derivative(layer.linear_activations)
+            layer.activation_derivative(layer.v_ff)
             for layer in self.layers
         ]
 
@@ -141,7 +229,7 @@ class FisherInterface:
         self._fisher = {}  # Accumulated Fisher matrix
         self._means = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
-        
+    
     def _calculate_fisher(self, dataloader):
         """Compute Fisher Information Matrix across entire dataset"""
         fisher = {}
@@ -156,7 +244,7 @@ class FisherInterface:
             # Log likelihood computation
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
-            probs = torch.exp(log_probs)
+            # probs = torch.exp(log_probs)
             # log_likelihood = (log_probs * probs).sum(dim=1)
 
             # Can also calculate log likelihood with targets possibly TODO double check what to use
@@ -189,3 +277,76 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
+        
+
+    def _compute_fisher_modulation(self, layer, i):
+        """Compute Fisher-based modulation for parameter preservation"""
+        gamma = torch.zeros((layer.weights.shape[0]))
+        fisher_norm = 0.0
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weights' in n:
+                    gamma += torch.sum(base_gamma, dim=1)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)                    
+                elif 'bias' in n:
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+    
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+
+    
+    def _compute_gamma(self, layer, i, normalize=False):
+        """Compute Fisher-based modulation for parameter preservation"""
+        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+        fisher_norm = 0.0
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weights' in n:
+                    gamma += (layer.r_prev @ base_gamma.T)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
+                elif 'bias' in n:
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+        
+        if normalize:
+            return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+        return - self.beta * gamma
+
+    
+    def _compute_fisher_modulation_conv(self, layer, i):
+        """
+        Compute Fisher-based modulation for convolutional layers.
+        
+        Args:
+            layer: The convolutional layer (e.g., an EFC_Conv_layer instance).
+            i (int): Layer index in the network.
+        
+        Returns:
+            torch.Tensor: Modulation term gamma with shape [out_channels].
+        """
+        out_channels = layer.out_channels  # Number of output channels
+        gamma = torch.zeros(out_channels)  # Shape: [out_channels]
+        fisher_norm = torch.zeros(out_channels)  # Shape: [out_channels]
+
+        for n, p in layer.named_parameters():
+            full_name = f'layers.{i}.{n}'
+            if p.requires_grad and full_name in self._fisher:
+                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                if 'weight' in n:
+                    # Weights shape: [out_channels, in_channels, kernel_h, kernel_w]
+                    # base_gamma shape: [out_channels, in_channels, kernel_h, kernel_w]
+                    gamma += base_gamma.sum(dim=(1, 2, 3))  # Sum over in_channels and kernel dims
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=(1, 2, 3))
+                elif 'bias' in n:
+                    # Bias shape: [out_channels]
+                    # base_gamma shape: [out_channels]
+                    gamma += base_gamma
+                    fisher_norm += self._fisher[full_name]**2
+
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)

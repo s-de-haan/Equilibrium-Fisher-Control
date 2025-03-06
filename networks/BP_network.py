@@ -8,3 +8,6 @@ class BP_network(Network):
 
     def backward(self, _):
         self.loss.backward()
+
+    def complete_task(self, dataloader):
+        pass
