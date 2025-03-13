@@ -116,15 +116,6 @@ class EFC_CNN_network(nn.Module):
         )
 
     def forward(self, x):
-        """
-        Forward pass through the network.
-        
-        Args:
-            x (Tensor): Input tensor of shape [batch_size, in_channels, 28, 28].
-        
-        Returns:
-            Tensor: Output tensor of shape [batch_size, num_classes].
-        """
         self.input = x
         self.bzs = x.shape[0]
         
@@ -258,8 +249,6 @@ class FisherInterface:
             # Log likelihood computation
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
-            # probs = torch.exp(log_probs)
-            # log_likelihood = (log_probs * probs).sum(dim=1)
 
             # Can also calculate log likelihood with targets possibly TODO double check what to use
             log_likelihood = (log_probs * targets).sum(dim=1)

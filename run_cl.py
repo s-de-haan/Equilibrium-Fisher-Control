@@ -11,6 +11,7 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 400, 400, 2],
+        "num_classes": 2,
         "lr": 1e-3,
         "batch_size": 256,
         "epochs": 4,
@@ -24,7 +25,7 @@ def main():
         "seed": 0,
         "target_lr": 1.0, # needs to be < time_constant_ratio
         "alpha_di": 1e-3,
-        "tau": 0.008,
+        "taus": [0.02, 0.016, 0.01],
         "dt_di": 0.0016,
         "psi_lr": 0.1,
         "alpha_psi": 0.0,
@@ -43,7 +44,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = EFC_network_v4(config=config)
+    model = EFC_network_v5(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

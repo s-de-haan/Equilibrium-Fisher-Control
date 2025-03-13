@@ -7,8 +7,6 @@ from networks.layer_interface import Layer
 class DFC_layer(Layer):
     def __init__(self, in_features, out_features, activation_fn, name="DFC_layer"):
         super(DFC_layer, self).__init__(in_features, out_features, activation_fn, name)
-        self.expected_weight_update = 0.0
-        self.expected_bias_update = 0.0
 
     def backward(self):
         teaching_signal = self.r - self.r_ff
@@ -25,21 +23,18 @@ class BP_layer(Layer):
 
 
 class DFC_Conv_layer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation_fn=None, name="EFC_Conv_layer"):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=1, activation_fn=None, name="DFC_Conv_layer"):
         super().__init__()
         
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.kernel_size = kernel_size
+        self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
         self.stride = stride
         self.padding = padding
-        self.activation_fn = activation_fn
+        self.activation_fn = activation_fn or nn.Identity()
         self.name = name
         
-        # Note: in_features is not directly applicable for conv layers, but set for compatibility
-        self.in_features = in_channels  # Simplification; could be adjusted based on input spatial size
-        
-        # Initialize convolutional layer
+        # Convolutional layer
         self.conv = nn.Conv2d(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -48,31 +43,54 @@ class DFC_Conv_layer(nn.Module):
             padding=self.padding,
             bias=True
         )
-        # Assign weights and bias for base class compatibility
-        self._weights = self.conv.weight  # Shape: [out_channels, in_channels, K_h, K_w]
-        self._bias = self.conv.bias       # Shape: [out_channels]
         
-        nn.init.kaiming_normal_(self._weights, mode='fan_in', nonlinearity='relu') # TODO check if this works approx with Softplus
+        # Alias weights and bias for compatibility with framework
+        self._weights = self.conv.weight  # [out_channels, in_channels, kh, kw]
+        self._bias = self.conv.bias       # [out_channels]
+        
+        # Initialize weights
+        nn.init.kaiming_normal_(self._weights, mode='fan_in', nonlinearity='relu')
+        
+        # Attributes for dynamical system
+        self.r_prev = None  # Input to the layer
+        self.v_ff = None    # Pre-activation output
+        self.r = None       # Post-activation output
+        self.r_ff = None    # Feedforward target
+        self.r_out = None   # Output after pooling (set by network)
+
+    @property
+    def weights(self):
+        return self._weights
+
+    @property
+    def bias(self):
+        return self._bias
+
+    @property
+    def activation_derivative(self):
+        return self.activation_fn.derivative
 
     def forward(self, x):
         self.r_prev = x
         a = self.conv(x)
-        self.linear_activations = a
+        self.v_ff = a
         self.r = self.activation_fn(a)
         return self.r
-    
+
     def backward(self):
-        teaching_signal = self.r - self.r_ff  # Shape: [batch_size, out_channels, height_out, width_out]
+        """Compute gradients using teaching signal for weight updates."""
+        teaching_signal = self.r - self.r_ff  # [batch_size, out_channels, h_out, w_out]
         bsz = self.r_prev.size(0)
 
-        # Compute weight gradient using batched correlation
+        # Weight gradient via convolution
         weight_grad = F.conv2d(
-            self.r_prev.transpose(0, 1),      # [in_channels, batch_size, height_in, width_in]
-            teaching_signal.transpose(0, 1),  # [out_channels, batch_size, height_out, width_out]
+            self.r_prev.transpose(0, 1),      # [in_channels, batch_size, h_in, w_in]
+            teaching_signal.transpose(0, 1),  # [out_channels, batch_size, h_out, w_out]
             padding=self.padding,
             stride=self.stride,
             groups=self.in_channels
         )
-
-        self._weights.grad = - weight_grad / bsz
-        self._bias.grad = - teaching_signal.sum(dim=(0, 2, 3)) / bsz 
+        self._weights.grad = -weight_grad / bsz
+        
+        # Bias gradient
+        self._bias.grad = -teaching_signal.sum(dim=(0, 2, 3)) / bsz
