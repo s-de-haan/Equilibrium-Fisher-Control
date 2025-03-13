@@ -13,26 +13,26 @@ def main():
         "layers": [784, 400, 400, 2],
         "lr": 1e-3,
         "batch_size": 256,
-        "epochs": 5,
+        "epochs": 10,
         "mode": "di",  # or "di"
         "num_workers": 0,
         "loss_fn": "ce", # "mse"
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:2",
+        "device": "cuda:0",
         "output_dir": "./outputs",
         "seed": 0,
-        "target_lr": 1.0, # needs to be < time_constant_ratio
-        "alpha_di": 1e-4,
-        "taus": [0.01, 0.008, 0.006],
+        "target_lr": 1e-2, # needs to be < time_constant_ratio
+        "alpha_di": 1e-2,
+        "taus": [0.02, 0.016, 0.01],
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
         "tmax_di": 500,
-        "dt_di": 0.001,
+        "dt_di": 0.005,
         "k_p": 2.0,
         "eps": 1e-3, # there is an interplay between dt_di and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 1000.0, # efc params
+        "beta_efc": 500.0, # efc params
     }
     config = dotdict(config)
     torch.set_default_device(config.device)

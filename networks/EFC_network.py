@@ -81,7 +81,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 v_ff_current[i] = layer.r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
 
                 # Apical with teaching signal and Fisher modulation
-                psi = psis[i] #= torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
+                psi = psis[i]#= torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
                 gamma = self._compute_fisher_modulation(layer, i) 
                 if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
                     # scaling_factor = torch.abs(psi).mean()
@@ -102,6 +102,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
             u_int_current = u_int_next
             u_current = u_next
+            
 
         # Steady-state values per layer
         rs = [self.input]
