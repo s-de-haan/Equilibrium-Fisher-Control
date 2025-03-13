@@ -65,7 +65,7 @@ class DFC_network(Network, JacobianInterface):
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
         # Simulate tmax timesteps
-        for _ in range(self.tmax - 1):
+        for _ in range(self.tmax):
             # Stop if converged
             if converged_mask.all():
                 break
@@ -172,7 +172,7 @@ class DFC_Mult_network(Network, JacobianInterface):
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
-        for t in range(self.tmax - 1):
+        for t in range(self.tmax):
             # Stop if converged
             if converged_mask.all():
                 break
