@@ -11,7 +11,7 @@ def main():
     # Training configuration
     config = {
         "layers": [784, 400, 400, 2],
-        "lr": 1e-6,
+        "lr": 1e-3,
         "batch_size": 256,
         "epochs": 4,
         "mode": "di",  # or "di"

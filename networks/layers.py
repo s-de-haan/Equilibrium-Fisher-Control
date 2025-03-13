@@ -24,7 +24,7 @@ class BP_layer(Layer):
         super(BP_layer, self).__init__(in_features, out_features, activation_fn, name)
 
 
-class EFC_Conv_layer(nn.Module):
+class DFC_Conv_layer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, activation_fn=None, name="EFC_Conv_layer"):
         super().__init__()
         

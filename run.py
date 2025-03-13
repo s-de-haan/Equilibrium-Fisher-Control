@@ -40,7 +40,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = EFC_network_v4(config=config)
+    model = DFC_Mult_network_clean(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

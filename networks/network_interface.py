@@ -97,7 +97,7 @@ class EFC_CNN_network(nn.Module):
         
         # 4 Convolutional Modules
         for i in range(4):
-            conv_layer = EFC_Conv_layer(
+            conv_layer = DFC_Conv_layer(
                 in_channels=current_channels,
                 out_channels=64,
                 kernel_size=3,
@@ -114,6 +114,7 @@ class EFC_CNN_network(nn.Module):
         self.layers.append(
             nn.Linear(64, self.num_classes)
         )
+
     def forward(self, x):
         """
         Forward pass through the network.
