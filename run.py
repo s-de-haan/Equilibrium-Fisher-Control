@@ -26,14 +26,14 @@ def main():
         "device": "cuda:2",
         "output_dir": "./outputs",
         "seed": 1337,
-        "taus": [0.02, 0.016, 0.01],
-        "target_lr": 1.0,       # Updated to optimal value
+        "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
+        "target_lr": 1e-2,       # Updated to optimal value
         "alpha_di": 3.0,        # 1/tau for tau=0.2
         "dt_di": 0.0016,         # Time step
         "time_constant_ratio": 0.2,  # tau
-        "tmax_di": 500,
+        "tmax_di": 3000,
         "k_p": 1.0,             # Optimal for G=1, tau=0.2
-        "eps": 1e-4,
+        "eps": 1e-3,
         "save": False,
     }
     config = dotdict(config)

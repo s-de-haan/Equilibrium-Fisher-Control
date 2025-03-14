@@ -11,7 +11,7 @@ class DFC_layer(Layer):
     def backward(self):
         teaching_signal = self.r - self.r_ff
 
-        self._weights.grad = -2 / self.r_prev.shape[0] * teaching_signal.t().mm(self.r_prev)
+        self._weights.grad = -2 / self.r_prev.shape[0] * teaching_signal.t().mm(self.r_prev.view(self.r_prev.shape[0], -1))
         self._bias.grad = -2 * teaching_signal.mean(dim=0)
 
 
@@ -88,9 +88,8 @@ class DFC_Conv_layer(nn.Module):
             teaching_signal.transpose(0, 1),  # [out_channels, batch_size, h_out, w_out]
             padding=self.padding,
             stride=self.stride,
-            groups=self.in_channels
         )
-        self._weights.grad = -weight_grad / bsz
+        self._weights.grad = -2 * weight_grad.transpose(0, 1) / bsz
         
         # Bias gradient
-        self._bias.grad = -teaching_signal.sum(dim=(0, 2, 3)) / bsz
+        self._bias.grad = -2 * teaching_signal.sum(dim=(0, 2, 3)) / bsz

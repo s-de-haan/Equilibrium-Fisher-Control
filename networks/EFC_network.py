@@ -348,24 +348,28 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
         for i in range(4):
             conv_layer = self.layers[i]
             bn_layer = self.bn_layers[i]
-            x = conv_layer(x)               # Convolution + activation
-            x = bn_layer(x)                 # Batch normalization
-            x, indices = self.pool(x)       # Pooling
-            self.pool_indices[i] = indices  # Store pooling indices
-            conv_layer.r_out = x            # Store output after pooling
-
-        # Flatten for FC layer
-        x = x.view(self.bzs, -1)
+            x = conv_layer.conv(x)              # Raw convolution output (v_ff)
+            conv_layer.v_ff = x                 # Store pre-activation
+            x = conv_layer.activation_fn(x)     # Apply activation
+            conv_layer.r = x                    # Initialize r with feedforward output
+            x = bn_layer(x)                     # Batch normalization
+            x, indices = self.pool(x)           # Max pooling with indices
+            self.pool_indices[i] = indices      # Store for feedback
+            conv_layer.r_out = x                # Store post-pooling output
         
-        # Adjust FC layer input size if necessary
+        # Flatten and apply FC layer
+        x = x.view(self.bzs, -1)
         fc_layer = self.layers[-1]
         if fc_layer.in_features != x.shape[1]:
             fc_layer.in_features = x.shape[1]
-            fc_layer._create_init_layer()  # Reinitialize weights with correct size
+            fc_layer._create_init_layer()
         
-        # FC layer
-        x = fc_layer(x)
+        x = fc_layer.feedforward[0](x)          # Linear transformation (v_ff)
+        fc_layer.v_ff = x                       # Store pre-activation
+        x = fc_layer.activation_fn(x)           # Apply activation (identity here)
+        fc_layer.r = x                          # Initialize r
         self.y_hat = x
+
         return x
 
     @torch.no_grad()
@@ -376,6 +380,8 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool, device=self.device)
 
         for t in range(self.tmax):
+            for bn in self.bn_layers:
+                bn.eval()  # Freeze BatchNorm stats
             error = self._compute_error(self.layers[-1].r, self.targets)
             
             # PI control
@@ -398,7 +404,7 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
                     layer.r_prev = self.pool(self.layers[i-1].r)[0] # not the indices
                 elif isinstance(self.layers[i-1], DFC_layer):
                     layer.r_prev = self.layers[i-1].r
-                
+
                 # Compute feedforward activations
                 if isinstance(layer, DFC_Conv_layer):
                     layer.v_ff = F.conv2d(
@@ -408,8 +414,10 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
                         stride=layer.stride,
                         padding=layer.padding
                     )
+                    if i < len(self.bn_layers):  # Apply BN for conv layers
+                        layer.v_ff = self.bn_layers[i](layer.v_ff)
                 elif isinstance(layer, DFC_layer):
-                    layer.v_ff = layer.r_prev @ layer.weights.t() + layer.bias.unsqueeze(0)
+                    layer.v_ff = layer.r_prev.view(self.bzs, -1) @ layer.weights.t() + layer.bias.unsqueeze(0)
                 
                 layer.r_ff = layer.activation_fn(layer.v_ff)
                 
@@ -421,6 +429,8 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
 
             u_int_current = u_int_next
             u_current = u_next
+
+        print(t)
 
     @torch.no_grad()
     def _calculate_psis(self, u):
