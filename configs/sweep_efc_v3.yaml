@@ -6,7 +6,7 @@ parameters:
   num_workers:
     value: 0
   setting:
-    value: DomainIL
+    value: domainIL
   fisher_normalization: 
     distribution: categorical
     values:
