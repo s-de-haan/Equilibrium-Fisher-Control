@@ -12,6 +12,7 @@ class Network(nn.Module):
         self.loss_fn = nn.MSELoss() if config.loss_fn == "mse" else nn.CrossEntropyLoss()
         self.loss_fn_name = config.loss_fn
         self.device = config.device
+        self.lr = config.lr
         self.name = name
 
     @property
@@ -96,7 +97,7 @@ class EFC_CNN_network(nn.Module):
         
         # 4 Convolutional Modules
         for i in range(4):
-            conv_layer = EFC_Conv_layer(
+            conv_layer = DFC_Conv_layer(
                 in_channels=current_channels,
                 out_channels=64,
                 kernel_size=3,
@@ -113,16 +114,8 @@ class EFC_CNN_network(nn.Module):
         self.layers.append(
             nn.Linear(64, self.num_classes)
         )
+
     def forward(self, x):
-        """
-        Forward pass through the network.
-        
-        Args:
-            x (Tensor): Input tensor of shape [batch_size, in_channels, 28, 28].
-        
-        Returns:
-            Tensor: Output tensor of shape [batch_size, num_classes].
-        """
         self.input = x
         self.bzs = x.shape[0]
         
@@ -178,7 +171,6 @@ class JacobianInterface:
 
         for layer in self.layers:
             layer.backward()
-            layer.activation_fn.reset_modulation()
 
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
@@ -193,8 +185,7 @@ class JacobianInterface:
 
     def _set_targets_ce(self, y):
         """ CE loss solution """
-        # self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
-        self.targets = y
+        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
 
     def _calculate_full_jacobian(self):
@@ -216,12 +207,32 @@ class JacobianInterface:
             )
 
         return torch.cat(Js, dim=2), Js
+    
+    @torch.no_grad()
+    def _calculate_psis(self, u):
+        L = len(self.layers)
+        psi_list = [None] * L
+
+        # Derivatives per layer
+        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
+        
+        # Last layer
+        psi = u * activations_derivatives[-1]
+        psi_list[-1] = psi
+        
+        # Backward from second-to-last to first
+        for i in range(L - 2, -1, -1):
+            psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
+            psi_list[i] = psi
+        
+        return psi_list
+
 
 class FisherInterface:
     def __init__(self):
-        self._means = {}
+        self._theta_star = {}
         self._fisher = {}  # Accumulated Fisher matrix
-        self._means = {}  # Latest parameter optima (theta_T^*)
+        self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
         
     def _calculate_fisher(self, dataloader):
@@ -238,8 +249,6 @@ class FisherInterface:
             # Log likelihood computation
             outputs = self(inputs)
             log_probs = F.log_softmax(outputs, dim=1)
-            # probs = torch.exp(log_probs)
-            # log_likelihood = (log_probs * probs).sum(dim=1)
 
             # Can also calculate log likelihood with targets possibly TODO double check what to use
             log_likelihood = (log_probs * targets).sum(dim=1)
@@ -256,20 +265,20 @@ class FisherInterface:
         # Normalize
         for n in fisher.keys():
             fisher[n] /= len(dataloader.dataset)
-
+            
         return fisher
 
     def complete_task(self, dataloader):
-        """ Update accumulated Fisher and latest means after finishing a task. """
+        """Update Fisher and Bayesian posterior with normalization and inverse."""
         current_fisher = self._calculate_fisher(dataloader)
-        self._means = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
+        self._theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
 
-        # Initialize for the first task else accumulate Fisher and update means
         if self._first_task:
             self._fisher = current_fisher
             self._first_task = False
         else:
             for n in self._fisher:
+                # Accumulate Fisher Information
                 self._fisher[n] += current_fisher[n]
         
 
@@ -281,36 +290,45 @@ class FisherInterface:
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'
             if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
                 if 'weights' in n:
                     gamma += torch.sum(base_gamma, dim=1)                    
                 elif 'bias' in n:
                     gamma += base_gamma
     
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-
+        return - self.beta * gamma #/ (torch.sqrt(fisher_norm) + 1e-8)
     
-    def _compute_gamma(self, layer, i, normalize=False):
-        """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
+    @torch.no_grad()
+    def _compute_gamma(self, layer, i):
+        if self._first_task:
+            return 0.0
         
-        fisher_norm = 0.0
-
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
-                if 'weights' in n:
-                    gamma += (layer.r_prev @ base_gamma.T)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
-                elif 'bias' in n:
-                    gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
+        F_weights = self._fisher[f'layers.{i}._weights']
+        F_bias = self._fisher[f'layers.{i}._bias']
         
-        if normalize:
-            return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-        return - self.beta * gamma
+        # weight_diff = layer._weights + layer.expected_weight_update - self._theta_star[f'layers.{i}._weights']
+        # bias_diff = layer._bias + layer.expected_bias_update - self._theta_star[f'layers.{i}._bias']
 
+        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
+        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
+
+        # print(layer.r_prev.shape, (F_weights * weight_diff).T.shape, (F_bias * bias_diff).shape, weight_diff.shape, bias_diff.shape)
+        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
+
+        return -self.beta * gamma / fisher_norm
+    
+    @torch.no_grad()
+    def _compute_expected_update(self, layer):
+        if self._first_task:
+            return
+        
+        teaching_signal = layer.r - layer.r_ff
+        scaling_factor = 2 * self.lr  / layer.r_prev.shape[0]
+        
+        layer.expected_weight_update = scaling_factor * teaching_signal.t().mm(layer.r_prev)  # Shape: (out_features, in_features)
+        layer.expected_bias_update = scaling_factor * teaching_signal # TODO problem: the samples are talking to eachother now, maybe just not have this
+    
     
     def _compute_fisher_modulation_conv(self, layer, i):
         """
@@ -330,7 +348,7 @@ class FisherInterface:
         for n, p in layer.named_parameters():
             full_name = f'layers.{i}.{n}'
             if p.requires_grad and full_name in self._fisher:
-                base_gamma = self._fisher[full_name] * (p - self._means[full_name])
+                base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
                 if 'weight' in n:
                     # Weights shape: [out_channels, in_channels, kernel_h, kernel_w]
                     # base_gamma shape: [out_channels, in_channels, kernel_h, kernel_w]

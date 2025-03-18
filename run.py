@@ -3,7 +3,8 @@ import torch.nn as nn
 from networks.BP_network import *
 from networks.EWC_network import *
 from networks.DFC_network import *
-from src.datasets import MNIST
+from networks.EFC_network import *
+from src.datasets import *
 from src.trainers import Trainer
 from src.utils import dotdict
 
@@ -12,35 +13,36 @@ from src.utils import dotdict
 def main():
     # Training configuration
     config = {
-        "layers": [784, 256, 256, 256, 10],
-        "lr": 1e-4,
+        "layers": [784, 400, 400, 10],
+        "num_classes": 10,
+        "lr": 1e-3,
         "batch_size": 256,
-        "epochs": 200,
-        # "runs": 10,
-        "mode": "di",  # or "di"
+        "epochs": 20,
+        "mode": "di",
         "num_workers": 8,
-        "loss_fn": "ce", # "mse" or "ce"
+        "loss_fn": "ce",
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:1",
+        "device": "cuda:2",
         "output_dir": "./outputs",
         "seed": 1337,
-        "target_lr": 1e-2,
-        "alpha_di": 1e-3,
-        "dt_di": 0.006,  # dynamical inversion params makes big speed diff - lower for mult, higher (0.02) for additive
-        "time_constant_ratio": 0.2,
-        "tmax_di": 500,
-        "k_p": 2.0,
-        "eps": 1e-4, # 1e-4 really fast
+        "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
+        "target_lr": 1e-2,       # Updated to optimal value
+        "alpha_di": 3.0,        # 1/tau for tau=0.2
+        "dt_di": 0.0016,         # Time step
+        "time_constant_ratio": 0.2,  # tau
+        "tmax_di": 3000,
+        "k_p": 1.0,             # Optimal for G=1, tau=0.2
+        "eps": 1e-3,
         "save": False,
     }
     config = dotdict(config)
 
     # Load data
-    train_loader, test_loader = MNIST(config=config).get_dataloaders()
+    train_loader, test_loader = ConvMNIST(config=config).get_dataloaders()
 
     # Train model
-    model = BP_network(config=config)
+    model = EFC_Conv_v5_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()
