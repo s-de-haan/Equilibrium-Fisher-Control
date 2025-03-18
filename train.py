@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
                         help="Network layer sizes (e.g., 784 400 400 2)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
                         help="whether to run with (di) or without (ndi) dynamic inversion")
@@ -64,6 +64,7 @@ def parse_args():
     parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="EFC Normalization")
     parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
     parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
+    parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to use stability gap")
     
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
@@ -123,7 +124,7 @@ def main():
                    entity="equilibrium-fisher-control",
                    config=OmegaConf.to_container(config))
         tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
+        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)    
     
     elif config.setting == "classIL":
         wandb.init(project="class_incremental_learning_baselines", 
