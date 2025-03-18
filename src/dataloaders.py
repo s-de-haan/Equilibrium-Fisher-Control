@@ -4,19 +4,21 @@ import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
+from src.utils import str2bool
 
 # Base dataset class (handles image conversion)
 ### CIFAR10 datasets can be found below. 
 
 class BaseMNISTDataset(Dataset):
-    def __init__(self, device, data, targets, classes, transform=None, setting = None):
+    def __init__(self, device, data, targets, classes, transform=None, setting = None, flatten = True):
         self.data = data  # Move data to specified device
         self.targets = targets
         self.classes = classes  # Classes present in this task
         self.transform = transform
         self.device = device 
         self.setting = setting
-        
+        self.flatten = flatten
+                
     def __len__(self):
         return len(self.data)
     
@@ -35,7 +37,8 @@ class BaseMNISTDataset(Dataset):
             img = self.transform(img)  # Returns tensor (1, 28, 28)
         # One-hot encode and move to device
         target = self._one_hot_encode(target)
-        img = img.view(28 * 28)  # Flatten, still on device
+        if self.flatten:
+            img = img.view(28 * 28)  # Flatten, still on device
         return img, target
 
 # Task Incremental Learning class
@@ -46,6 +49,7 @@ class TaskILMNIST:
         self.batch_size = self.config.batch_size
         self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.classes_per_task = 2
+        self.flatten = True if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
         self.transform = transforms.Compose([
             transforms.ToTensor(),
@@ -84,8 +88,8 @@ class TaskILMNIST:
         one_hot_classes = list(range(self.classes_per_task))  # [0, 1] for 2 classes
 
         # Create datasets
-        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform)
-        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform)
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform, flatten=self.flatten)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform, flatten=self.flatten)
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
@@ -108,6 +112,7 @@ class DomainILMNIST:
         self.num_tasks = 5
         self.config = config
         self.batch_size = self.config.batch_size
+        self.flatten = True if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
         
@@ -140,8 +145,8 @@ class DomainILMNIST:
         ])
         
         # Create datasets (no label remapping)
-        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform)
-        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform)
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten=self.flatten)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten=self.flatten)
         
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
                                   num_workers=self.config.num_workers)
@@ -162,6 +167,7 @@ class ClassILMNIST:
         self.config = config
         self.batch_size = self.config.batch_size
         self.classes_per_task = 2
+        self.flatten = True if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
         self.transform = transforms.Compose([
@@ -194,8 +200,8 @@ class ClassILMNIST:
         all_classes = list(range(10))
 
         # No label remapping (keep original labels)
-        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting = "class")
-        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting = "class")
+        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting = "class", flatten = self.flatten)
+        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting = "class", flatten = self.flatten)
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
@@ -214,13 +220,14 @@ class ClassILMNIST:
 
 
 class BaseCIFAR10Dataset(Dataset):
-    def __init__(self, device, data, targets, classes, transform=None, setting=None):
+    def __init__(self, device, data, targets, classes, transform=None, setting=None, flatten = False):
         self.data = data  # Move data to specified device
         self.targets = targets
         self.classes = classes  # Classes present in this task
         self.transform = transform
         self.device = device 
         self.setting = setting
+        self.flatten = flatten
         
     def __len__(self):
         return len(self.data)
@@ -243,7 +250,8 @@ class BaseCIFAR10Dataset(Dataset):
             img = self.transform(img)  # Returns tensor (3, 32, 32)
         # One-hot encode and move to device
         target = self._one_hot_encode(target)
-        # img = img.view(3 * 32 * 32)  # Flatten to (3072,), still on device
+        if self.flatten:
+            img = img.view(3 * 32 * 32)  # Flatten to (3072,), still on device
         return img, target
 
 # Task Incremental Learning class
@@ -251,6 +259,7 @@ class TaskILCIFAR10:
     def __init__(self, config):
         self.num_tasks = 5
         self.config = config
+        self.flatten = False if config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.batch_size = self.config.batch_size
         self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         self.classes_per_task = 2
@@ -295,8 +304,8 @@ class TaskILCIFAR10:
         one_hot_classes = list(range(self.classes_per_task))  # [0, 1] for 2 classes
 
         # Create datasets
-        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform)
-        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform)
+        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform, self.flatten)
+        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform, self.flatten)
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
@@ -316,6 +325,7 @@ class ClassILCIFAR10:
     def __init__(self, config):
         self.num_tasks = 5
         self.config = config
+        self.flatten = False if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.batch_size = self.config.batch_size
         self.classes_per_task = 2
         self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
@@ -354,8 +364,8 @@ class ClassILCIFAR10:
         all_classes = list(range(10))
 
         # No label remapping (keep original labels)
-        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting="class")
-        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting="class")
+        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting="class", flatten = self.flatten)
+        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting="class", flatten = self.flatten)
 
         # Create dataloaders
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
@@ -375,6 +385,7 @@ class DomainILCIFAR10:
     def __init__(self, config):
         self.num_tasks = 5
         self.config = config
+        self.flatten = False if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.batch_size = self.config.batch_size
         self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
@@ -411,8 +422,8 @@ class DomainILCIFAR10:
         ])
         
         # Create datasets (no label remapping)
-        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, task_classes, transform)
-        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, task_classes, transform)
+        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten = self.flatten)
+        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten = self.flatten)
         
         train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
                                   num_workers=self.config.num_workers)

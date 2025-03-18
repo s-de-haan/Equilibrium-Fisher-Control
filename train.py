@@ -11,7 +11,7 @@ from networks.EFC_network import EFC_network_v2, EFC_network_v3
 from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
 from src.datasets import SplitMNIST
-from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST
+from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
 
 from src.trainers import WandBTrainerCL
 from src.trainers_taskIL import WandBTrainerCLTaskIL
@@ -65,6 +65,8 @@ def parse_args():
     parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
     parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
     parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to use stability gap")
+    parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"], help="Whether to use stability gap")
+    parser.add_argument("--dataset", type=str, default="MNIST", choices= ["CIFAR10", "MNIST"],help="Number of tasks")
     
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
@@ -93,6 +95,24 @@ def get_model(model_name: str, setting: str, config):
         }
     return models[model_name](config)
 
+def get_dataset(setting: str, dataset: str, config):
+    """Get dataset based on setting."""
+    if setting == "domainIL" and dataset == "MNIST":
+        return DomainILMNIST(config).get_all_tasks_dataloaders()
+    elif setting == "taskIL" and dataset == "MNIST":
+        return TaskILMNIST(config).get_all_tasks_dataloaders()
+    elif setting == "classIL" and dataset == "MNIST":
+        return ClassILMNIST(config).get_all_tasks_dataloaders()
+    elif setting == "domainIL" and dataset == "CIFAR10":
+        return DomainILCIFAR10(config).get_all_tasks_dataloaders()
+    elif setting == "taskIL" and dataset == "CIFAR10":
+        return TaskILCIFAR10(config).get_all_tasks_dataloaders()
+    elif setting == "classIL" and dataset == "CIFAR10":
+        return ClassILCIFAR10(config).get_all_tasks_dataloaders()
+    else:
+        raise ValueError("Invalid setting or dataset")
+    
+
 def main():
     args = parse_args()
     
@@ -109,31 +129,18 @@ def main():
     print(OmegaConf.to_yaml(config))
     
     model = get_model(config.method, config.setting, config)
+    tasks_dataloaders = get_dataset(config.setting, config.dataset, config)
+    project_name = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
     
-    if config.setting == "domainIL":
-        wandb.init(project="domain_incremental_learning_baselines", 
-                   name=config.run_name,
-                   entity="equilibrium-fisher-control",
-                   config=OmegaConf.to_container(config))
-        tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
+    wandb.init(project=project_name, 
+        name=config.run_name,
+        entity="equilibrium-fisher-control",
+        config=OmegaConf.to_container(config))
+    
+    if config.setting == "classIL":
+        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
+    else:
         trainer = WandBTrainerCL(model, tasks_dataloaders, config)
-        
-    elif config.setting == "taskIL":
-        wandb.init(project="task_incremental_learning_baselines", 
-                   name=config.run_name,
-                   entity="equilibrium-fisher-control",
-                   config=OmegaConf.to_container(config))
-        tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)    
-    
-    elif config.setting == "classIL":
-        wandb.init(project="class_incremental_learning_baselines", 
-                   name=config.run_name,
-                   entity="equilibrium-fisher-control",
-                   config=OmegaConf.to_container(config))
-        tasks_dataloaders = ClassILMNIST(config).get_all_tasks_dataloaders()
-        trainer = WandBTrainerCL(model, tasks_dataloaders, config)
-    
     trainer.train()
 
 if __name__ == "__main__":
