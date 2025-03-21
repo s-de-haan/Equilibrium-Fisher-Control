@@ -6,7 +6,6 @@ from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
-from networks.EFC_network import EFC_BP_network
 from networks.EFC_network import EFC_network_v2, EFC_network_v3 
 from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
@@ -60,8 +59,12 @@ def parse_args():
     parser.add_argument("--tmax_di", type=int, default=500, help="tmax for dynamic inversion")
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
     parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check") 
+    parser.add_argument("--dataset", type=str, default="MNIST", choices=["MNIST", "CIFAR10"], help="Dataset to use")
     parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"], help="Whether to use stability gap")
-    
+    parser.add_argument("--setting", type=str, default="domainIL", choices=["domainIL", "taskIL", "classIL"], help="Setting to use")
+    parser.add_argument("--run_name", type=str, default="default", help="Run name for wandb")
+    parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="Whether to normalize the Fisher matrix")
+    parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to compute stability gap")
     
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
@@ -78,7 +81,6 @@ def get_model(model_name: str, setting: str, config):
             "dfc": DFC_network,
             "ewc": EWC_network,
             "efc": EFC_network,
-            "efc_bp": EFC_BP_network,
             "efc_v2": EFC_network_v2,
             "efc_v3": EFC_network_v3
         }
@@ -88,6 +90,8 @@ def get_model(model_name: str, setting: str, config):
             "efc_bp": TaskIncremental_EFC_BP_network,
             "efc": TaskIncremental_EFC_network
         }
+    else:
+        raise ValueError("Invalid setting")
     return models[model_name](config)
 
 def get_dataset(setting: str, dataset: str, config):
@@ -132,7 +136,7 @@ def main():
         entity="equilibrium-fisher-control",
         config=OmegaConf.to_container(config))
     
-    if config.setting == "classIL":
+    if config.setting == "taskIL":
         trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
     else:
         trainer = WandBTrainerCL(model, tasks_dataloaders, config)
