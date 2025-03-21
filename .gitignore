@@ -171,4 +171,8 @@ data/
 wandb/
 
 # Outputs folder
-outputs/
+/outputs
+
+
+# Hyperparameter folder
+hyperparameter_tries/
