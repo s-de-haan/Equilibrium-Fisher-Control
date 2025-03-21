@@ -1,5 +1,5 @@
 from networks.network_interface import Network
-from networks.layers import BP_layer
+from networks.layers import *
 from networks.activation_function import *
 
 class BP_network(Network):

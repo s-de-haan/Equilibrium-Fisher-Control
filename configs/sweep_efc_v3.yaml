@@ -1,0 +1,64 @@
+method: grid
+metric:
+  goal: maximize
+  name: final_avg_accuracy
+parameters:
+  num_workers:
+    value: 0
+  setting:
+    value: domainIL
+  fisher_normalization: 
+    distribution: categorical
+    values:
+      - True
+      - False
+  alpha_di:
+    distribution: categorical
+    values:
+      - 0.0001
+      - 0.001
+  batch_size:
+    value: 256
+  beta_efc:
+    distribution: categorical
+    values:
+      - 1
+      - 5
+      - 50
+      - 500
+      - 5000
+  lr:
+    distribution: categorical
+    values:
+      - 1e-03
+  method:
+    values: 
+      - efc_v3
+  optimizer:
+    distribution: categorical
+    values:
+      - Adam
+  seed:
+    distribution: categorical
+    values:
+      - 69
+      - 42
+      - 6969
+  dt_di:
+    distribution: categorical
+    values:
+      - 1e-03
+      - 5e-02
+      - 1e-02
+  eps:
+    distribution: categorical
+    values:
+      - 1e-02
+      - 1e-03
+      - 5e-04
+  target_lr:
+    distribution: categorical
+    values:
+      - 1e-02
+      - 5e-02
+program: train.py
