@@ -59,14 +59,9 @@ def parse_args():
     parser.add_argument("--time_constant_ratio", type=float, default=0.2, help="Time constant ratio")
     parser.add_argument("--tmax_di", type=int, default=500, help="tmax for dynamic inversion")
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
-    parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check")
-    parser.add_argument("--psi_lr", type=float, default=0.5, help="Learning rate for psi")
-    parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="EFC Normalization")
-    parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
-    parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
-    parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to use stability gap")
+    parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check") 
     parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"], help="Whether to use stability gap")
-    parser.add_argument("--dataset", type=str, default="MNIST", choices= ["CIFAR10", "MNIST"],help="Number of tasks")
+    
     
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
