@@ -2,6 +2,7 @@ import argparse
 import wandb
 from omegaconf import OmegaConf
 
+from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
@@ -9,30 +10,18 @@ from networks.EFC_network import EFC_network
 from src.datasets import SplitMNIST
 from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST
 from src.trainers import WandBTrainerCL
+from src.trainers_taskIL import WandBTrainerCLTaskIL
 from src.utils import str2bool
+from train import parse_args
 
-def get_model(model_name: str, config):
-    """Get model based on name."""
-    models = {
-        "bp": BP_network,
-        "dfc": DFC_network,
-        "ewc": EWC_network,
-        "efc": EFC_network
-    }
-    return models[model_name](config)
 
-# def get_loss(scenario):
-#     """Get loss function based on model name."""
-#     if scenario == "class":
-#         return nn.CrossEntropyLoss()
-    
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
     # Network architecture & training hyperparameters:
-    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
+    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 10],
                         help="Network layer sizes (e.g., 784 400 400 2)")
-    parser.add_argument("--batch_size", type=int, default=128, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=15, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
                         help="whether to run with (di) or without (ndi) dynamic inversion")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for dataloader")
@@ -74,6 +63,17 @@ def parse_args():
         print("Ignoring unknown CLI arguments:", unknown)
     return args
 
+
+def get_model(model_name: str, config):
+    """Get model based on name."""
+    models = {
+        "bp": TaskIncrementalBP_network,
+        "dfc": DFC_network,
+        "ewc": EWC_network,
+        "efc": EFC_network
+    }
+    return models[model_name](config)
+
 def main():
     args = parse_args()
     
@@ -89,11 +89,16 @@ def main():
     print("Final configuration:")
     print(OmegaConf.to_yaml(config))
     
-    wandb.init(project="continual_learning_baselines", config=OmegaConf.to_container(config))
+    wandb.init(entity="equilibrium-fisher-control",
+               project="class incremental learning baselines", 
+               name=config.run_name,
+               config=OmegaConf.to_container(config))
     
     model = get_model(config.method, config)
-    tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
-    trainer = WandBTrainerCL(model, tasks_dataloaders, config)
+    # tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
+    
+    tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
+    trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
     trainer.train()
 
 if __name__ == "__main__":

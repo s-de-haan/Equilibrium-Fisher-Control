@@ -1,7 +1,6 @@
 import torchvision.datasets as datasets
 import numpy as np
 import torch
-
 from torchvision import transforms
 from torch.utils.data import DataLoader, TensorDataset, Subset
 
@@ -15,7 +14,7 @@ class MNIST:
             ]
         )
         self.train_dataset = datasets.MNIST(
-            root="data", train=True, transform=transform, download=True
+            root="data", train=True, transform=transform, download=True 
         )
         self.test_dataset = datasets.MNIST(
             root="data", train=False, transform=transform, download=True
@@ -70,7 +69,6 @@ class MNIST:
             pin_memory=True,
             shuffle=False,
         )
-
         return train_loader, test_loader
 
 
@@ -145,8 +143,8 @@ class SplitMNIST:
             dataset=train_dataset,
             batch_size=self.config.batch_size,
             generator=generator.manual_seed(self.config.seed),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
+            # num_workers=self.config.num_workers,
+            # pin_memory=True,
             shuffle=True,
         )
 
@@ -154,8 +152,8 @@ class SplitMNIST:
             dataset=test_dataset,
             batch_size=self.config.batch_size,
             generator=generator.manual_seed(self.config.seed),
-            num_workers=self.config.num_workers,
-            pin_memory=True,
+            # num_workers=self.config.num_workers,
+            # pin_memory=True,
             shuffle=False,
         )
 
