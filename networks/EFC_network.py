@@ -15,6 +15,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         
         self.beta = config.beta_efc
         self.clamp = config.clamp
+        self.tau = config.tau
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -94,12 +95,12 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
     Greatly simplified version with correct derivatives
 """
 class EFC_network_v2(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v2"):
+    def __init__(self, config, name="EFC_network_v2_v2"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
-        self.beta = config.beta
+        self.beta = config.beta_efc
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -140,13 +141,14 @@ class EFC_network_v2(Network, JacobianInterface, FisherInterface):
     Efficient implementation with implicit Jacobian calculation for scalability
 """
 class EFC_network_v3(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v3"):
+    def __init__(self, config, name="EFC_network_v3_v3"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
         self.fisher_normalization = config.fisher_normalization
+        print("IM PRINTING THE FISHER NORMALIZATION", self.fisher_normalization)
 
     @torch.no_grad()
     def _dynamical_inversion(self):

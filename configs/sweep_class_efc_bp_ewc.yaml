@@ -3,6 +3,8 @@ metric:
   goal: maximize
   name: final_avg_accuracy
 parameters:
+  num_workers:
+    value: 0
   alpha_di:
     distribution: categorical
     values:
@@ -13,52 +15,46 @@ parameters:
   beta_efc:
     distribution: categorical
     values:
-      - 1
-      - 2.5
-      - 5
-      - 7.5
-      - 10
+      - 0.1
+      - 0.8
+      - 3
+      - 20
+  lr:
+    distribution: categorical
+    values:
+      - 1e-06
+      - 1e-05
+      - 1e-04
+  method:
+    values: 
+      - efc
+      - bp
+      - ewc
+  optimizer:
+    distribution: categorical
+    values:
+      - Adam
+  seed:
+    distribution: categorical
+    values:
+      - 69
+      - 42
+  tau:
+    distribution: categorical
+    values:
+      - 1e-3
+      - 1e-1
+      - 5e-1
   eps:
     distribution: categorical
     values:
       - 1e-03
       - 1e-04
-      - 2e-04
-  lr:
-    distribution: categorical
-    values:
-      - 1.5e-06
-      - 3e-06
-      - 5e-06
-      - 1e-05
-      - 5e-05
-      - 1e-04
-  method:
-    value: efc
-  optimizer:
-    distribution: categorical
-    values:
-      - Adam
-      - SGD
-  seed:
-    distribution: categorical
-    values:
-      - 1
-      - 2
-      - 3
-      - 4
-      - 5
-  tau:
-    distribution: categorical
-    values:
-      - 0.002
-      - 0.008
-      - 0.016
-      - 0.032
+      - 2e-05
   target_lr:
     distribution: categorical
     values:
-      - 1e-04
       - 1e-03
-      - 2e-03
-program: train.py
+      - 5e-03
+      - 1e-02
+program: trainer_classIL.py

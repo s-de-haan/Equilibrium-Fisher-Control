@@ -269,7 +269,7 @@ class FisherInterface:
         self._fisher = {}  # Accumulated Fisher matrix
         self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
-    
+        
     def _calculate_fisher(self, dataloader):
         """Compute Fisher Information Matrix across entire dataset"""
         fisher = {}
@@ -330,11 +330,9 @@ class FisherInterface:
             if p.requires_grad:
                 base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
                 if 'weights' in n:
-                    gamma += torch.sum(base_gamma, dim=1)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)                    
+                    gamma += torch.sum(base_gamma, dim=1)                    
                 elif 'bias' in n:
                     gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
     
         return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
     
