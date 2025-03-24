@@ -138,9 +138,7 @@ class DFC_Mult_network(Network, JacobianInterface):
             v = v_ff
             r_ff = layer.activation_fn(v_ff)
 
-            e_psi = torch.exp(torch.abs(psis[i])) 
-            if i == len(self.layers) - 1:
-                e_psi = torch.where(r_ff > 0, e_psi, 1 / e_psi)
+            e_psi = torch.tanh(psis[i]) + 1
 
             layer.activation_fn.set_m(e_psi)
             r = layer.activation_fn(v)

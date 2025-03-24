@@ -188,6 +188,42 @@ class JacobianInterface:
         self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
 
+    def _calculate_layerwise_jacobians(self):
+        """
+        Compute the Jacobian J_{i,i-1} for each layer using DFC_layer's method.
+        """
+        Js = []
+        for layer in self.layers:
+            J = layer.compute_layerwise_jacobian()
+            Js.append(J)
+        return Js
+
+    def _calculate_jeff_and_gammaeff(self, Js):
+        """
+        Compute J_eff and gamma_eff using a single backward pass with Q = J^T.
+        """
+        output_size = self.layer_sizes[-1]
+
+        # Initialize at the output layer (i = L-1)
+        r_ff_L = self.layers[-1].r_ff
+        gamma_L = self._compute_gamma(self.layers[-1])
+        J_eff = (Js[-1].transpose(1, 2) * r_ff_L.unsqueeze(-1))  # Q_L = J_L^T
+        gamma_eff = (gamma_L * r_ff_L).unsqueeze(-1)
+
+        # Cumulative Jacobian starts as identity
+        cumulative_J = torch.eye(output_size).expand(self.bzs, output_size, output_size)
+
+        # Backward pass from L-2 to 0
+        for i in range(len(self.layers)-2, -1, -1):
+            cumulative_J = torch.bmm(cumulative_J, Js[i+1])
+            r_ff_i = self.layers[i].r_ff
+            gamma_i = self._compute_gamma(self.layers[i])
+            Q_i = Js[i].transpose(1, 2)  # Q_i = J_i^T
+            J_eff = J_eff + torch.bmm(cumulative_J, (Q_i * r_ff_i.unsqueeze(-1)))
+            gamma_eff = gamma_eff + torch.bmm(cumulative_J, (gamma_i * r_ff_i).unsqueeze(-1))
+
+        return J_eff.squeeze(-1), gamma_eff.squeeze(-1)
+
     def _calculate_full_jacobian(self):
         Js = [None] * len(self.layers)
         output_size = self.layer_sizes[-1]
@@ -230,7 +266,6 @@ class JacobianInterface:
 
 class FisherInterface:
     def __init__(self):
-        self._theta_star = {}
         self._fisher = {}  # Accumulated Fisher matrix
         self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
@@ -283,6 +318,9 @@ class FisherInterface:
         
 
     def _compute_fisher_modulation(self, layer, i):
+        if self._first_task:
+            return 0.0
+        
         """Compute Fisher-based modulation for parameter preservation"""
         gamma = torch.zeros((layer.weights.shape[0]))
         fisher_norm = 0.0
@@ -298,7 +336,23 @@ class FisherInterface:
                     gamma += base_gamma
                     fisher_norm += self._fisher[full_name]**2
     
-        return - self.beta * gamma #/ (torch.sqrt(fisher_norm) + 1e-8)
+        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+    
+    @torch.no_grad()
+    def _compute_gamma_with_activity(self, layer, i):
+        if self._first_task:
+            return 0.0
+        
+        F_weights = self._fisher[f'layers.{i}._weights']
+        F_bias = self._fisher[f'layers.{i}._bias']
+
+        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
+        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
+
+        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
+
+        return -self.beta * gamma / fisher_norm
     
     @torch.no_grad()
     def _compute_gamma(self, layer, i):
@@ -307,14 +361,10 @@ class FisherInterface:
         
         F_weights = self._fisher[f'layers.{i}._weights']
         F_bias = self._fisher[f'layers.{i}._bias']
-        
-        # weight_diff = layer._weights + layer.expected_weight_update - self._theta_star[f'layers.{i}._weights']
-        # bias_diff = layer._bias + layer.expected_bias_update - self._theta_star[f'layers.{i}._bias']
 
         weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
         bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
 
-        # print(layer.r_prev.shape, (F_weights * weight_diff).T.shape, (F_bias * bias_diff).shape, weight_diff.shape, bias_diff.shape)
         gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
         fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
 

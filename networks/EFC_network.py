@@ -242,12 +242,48 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
         self.tau = config.taus
 
     @torch.no_grad()
+    def _non_dynamical_inversion(self):
+        # Calculate Jacobians for each layer
+        Js = self._calculate_layerwise_jacobians()
+
+        # Compute J_eff and gamma_eff with Q = J^T
+        J_eff, gamma_eff = self._calculate_jeff_and_gammaeff(Js)
+
+        # Compute the output error
+        delta_L_minus = self._compute_error(self.y_hat, self.targets)
+
+        # Solve for u_star: (alpha I + J_eff) u_star = delta_L_minus - gamma_eff
+        u_star = torch.linalg.solve(J_eff + self.alpha * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
+
+        # Apply the control to update neuron outputs
+        for i, layer in enumerate(self.layers):
+            layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+
+            v_ff = torch.bmm(layer.r_prev[i].unsqueeze(1), layer.weights.t()).squeeze(1) + layer.bias
+            r_ff = layer.activation_fn(v_ff)
+            
+            J_T = Js[i].transpose(1, 2)  # Q_i = J_i^T
+            layer_u = torch.bmm(J_T, u_star.unsqueeze(-1)).squeeze(-1) 
+            gamma_i = self._compute_gamma(layer)
+            
+            # Multiplicative modulation
+            r = r_ff * (torch.tanh(layer_u + gamma_i) + 1)
+
+            layer.v_ff = v_ff
+            layer.r_ff = r_ff
+            layer.r = r
+            
+
+    @torch.no_grad()
     def _dynamical_inversion(self):
         u_current = torch.zeros((self.bzs, self.output_size))
         u_int_current = torch.zeros((self.bzs, self.output_size))
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
         for t in range(self.tmax):
+            if converged_mask.all():
+                break
+
             error = self._compute_error(self.layers[-1].r, self.targets)
             
             # Proportional and integral (PI) control
@@ -256,8 +292,6 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
 
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all():
-                break
 
             psis = self._calculate_psis(u_next)
 
@@ -271,7 +305,8 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
 
                 # Apical with teaching signal and Fisher modulation
                 psi = psis[i]
-                e_psi_gamma = torch.tanh(psi) + 1
+                gamma = self._compute_fisher_modulation(layer, i)
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 # Soma with modulation
                 tau = self.tau[i]
@@ -280,6 +315,10 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
             u_int_current = u_int_next
             u_current = u_next
 
+        if self._first_task:
+            print(t, torch.min(psi).item(), torch.max(psi).item())
+        else:
+            print(t, torch.min(psi).item(), torch.max(psi).item(), torch.min(gamma).item(), torch.max(gamma).item())
 
 class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_Conv_v5_network"):

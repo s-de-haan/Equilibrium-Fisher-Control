@@ -14,6 +14,15 @@ class DFC_layer(Layer):
         self._weights.grad = -2 / self.r_prev.shape[0] * teaching_signal.t().mm(self.r_prev.view(self.r_prev.shape[0], -1))
         self._bias.grad = -2 * teaching_signal.mean(dim=0)
 
+    def compute_layerwise_jacobian(self):
+        """
+        Compute the Jacobian of this layer's output w.r.t. its input.
+        """
+        deriv = self.activation_derivative(self.v_ff) 
+        J = deriv.unsqueeze(-1) * self.weights.unsqueeze(0)
+
+        return J
+
 
 class BP_layer(Layer):
     def __init__(

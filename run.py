@@ -42,7 +42,7 @@ def main():
     train_loader, test_loader = ConvMNIST(config=config).get_dataloaders()
 
     # Train model
-    model = EFC_Conv_v5_network(config=config)
+    model = DFC_Mult_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()
