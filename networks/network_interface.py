@@ -44,6 +44,7 @@ class Network(nn.Module):
                     _layers[i],
                     _layers[i + 1],
                     activation_fn=activation_fn(),
+                    config=config,
                 )
             )
         self.layers.append(
@@ -51,6 +52,7 @@ class Network(nn.Module):
                 _layers[-2],
                 _layers[-1],
                 activation_fn=out_activation_fn(),
+                config=config,
             )
         )
 

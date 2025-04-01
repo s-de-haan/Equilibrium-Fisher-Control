@@ -3,14 +3,14 @@ import torch.nn as nn
 
 
 class Layer(nn.Module):
-    def __init__(self, in_features, out_features, activation_fn, name):
+    def __init__(self, in_features, out_features, activation_fn, config, name):
         super().__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.activation_fn = activation_fn
         self.name = name
-
+        self.config = config
         self._create_init_layer()
 
     @property

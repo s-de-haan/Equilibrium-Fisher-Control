@@ -65,7 +65,7 @@ class DFC_network(Network, JacobianInterface):
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
         # Simulate tmax timesteps
-        for _ in range(self.tmax - 1):
+        for t in range(self.tmax - 1):
             # Stop if converged
             if converged_mask.all():
                 break
@@ -104,8 +104,12 @@ class DFC_network(Network, JacobianInterface):
         rs = [self.input]
 
         for i, layer in enumerate(self.layers):
+            # r: output using u_current
             layer.r = r_current[i]
+            # r_ff: output not using u_current
+            # Note: previous layers could have been driven by u_current, this is just if the CURRENT layer is not.
             layer.r_ff = layer.activation_fn(v_ff_current[i])
+            # r_prev: output of the previous layer using u_current
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 

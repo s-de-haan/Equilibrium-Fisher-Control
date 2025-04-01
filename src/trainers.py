@@ -16,6 +16,7 @@ from src.callbacks import (
     ProgressBarCallback,
     TrainingCallback,
 )
+from src.serialize import dump_tensor, next_available_directory
 from src.utils import dotdict
 
 logger = logging.getLogger(__name__)
@@ -168,16 +169,28 @@ class TrainerInterface:
 
         epoch_loss = 0
 
-        for X, y in self.train_loader:
+        for i, (X, y) in enumerate(self.train_loader):
             X = X.to(self.device)
             y = y.to(self.device)
 
+            directory = f"epoch_{epoch}/batch_{i + 1}"
+            for i, layer in enumerate(self.model.layers):
+                dump_tensor(layer._weights, f"{directory}/param/initial/weights/{i}")
+                dump_tensor(layer._bias, f"{directory}/param/initial/bias/{i}")
+
+            dump_tensor(X, f"{directory}/input")
             y_hat = self.model(X)
+            dump_tensor(y_hat, f"{directory}/output")
 
             loss = self.model.calculate_loss(y_hat, y)
 
             self.optimizer.zero_grad()
             self.model.backward(y)
+
+            for i, layer in enumerate(self.model.layers):
+                dump_tensor(layer._weights.grad, f"{directory}/grad/weights/{i}")
+                dump_tensor(layer._bias.grad, f"{directory}/grad/bias/{i}")
+
             self.optimizer.step()
 
             epoch_loss += loss.item()

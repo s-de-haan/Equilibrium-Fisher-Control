@@ -172,3 +172,5 @@ wandb/
 
 # Outputs folder
 outputs/
+
+/dumps/
