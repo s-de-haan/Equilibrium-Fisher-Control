@@ -179,6 +179,7 @@ class TrainerInterface:
                 dump_tensor(layer._bias, f"{directory}/param/initial/bias/{i}")
 
             dump_tensor(X, f"{directory}/input")
+            dump_tensor(y, f"{directory}/target")
             y_hat = self.model(X)
             dump_tensor(y_hat, f"{directory}/output")
 
