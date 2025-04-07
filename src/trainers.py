@@ -182,6 +182,9 @@ class TrainerInterface:
             dump_tensor(y, f"{directory}/target")
             y_hat = self.model(X)
             dump_tensor(y_hat, f"{directory}/output")
+            for i, layer in enumerate(self.model.layers):
+                dump_tensor(layer.v_ff, f"{directory}/post_forward_pre_jacobian/v_ff/{i}")
+                dump_tensor(layer.r, f"{directory}/post_forward_pre_jacobian/r/{i}")
 
             loss = self.model.calculate_loss(y_hat, y)
 
