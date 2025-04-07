@@ -80,7 +80,7 @@ class DFC_network(Network, JacobianInterface):
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
             dir_prefix = f"full_jacobian"
-            arbitrary_timestep = 10
+            arbitrary_timestep = 5
             should_dump = t == arbitrary_timestep
             if should_dump:
                 for i, layer in enumerate(self.layers):
@@ -108,6 +108,12 @@ class DFC_network(Network, JacobianInterface):
                 layer.v_ff = v_current[i]
                 layer.r = r_current[i]
 
+                dump_cutoff = 10
+                if t < dump_cutoff:
+                    dir_prefix = f"dynamical_inversion"
+                    dump_tensor_if_not_exists(layer.v_ff, f"{dir_prefix}/timestep_{t + 1}/v_ff/{i}")
+                    dump_tensor_if_not_exists(layer.r, f"{dir_prefix}/timestep_{t + 1}/r/{i}")
+                
             u_int_current = u_int_next
             u_current = u_next
 
