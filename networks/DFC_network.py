@@ -108,12 +108,6 @@ class DFC_network(Network, JacobianInterface):
                 layer.v_ff = v_current[i]
                 layer.r = r_current[i]
 
-                dump_cutoff = 10
-                if t < dump_cutoff:
-                    dir_prefix = f"dynamical_inversion"
-                    dump_tensor_if_not_exists(layer.v_ff, f"{dir_prefix}/timestep_{t + 1}/v_ff/{i}")
-                    dump_tensor_if_not_exists(layer.r, f"{dir_prefix}/timestep_{t + 1}/r/{i}")
-                
             u_int_current = u_int_next
             u_current = u_next
 
@@ -129,7 +123,6 @@ class DFC_network(Network, JacobianInterface):
             # r_prev: output of the previous layer using u_current
             layer.r_prev = rs[i]
             rs.append(r_current[i])
-
 
 class DFC_Mult_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_Mult_network") -> None:

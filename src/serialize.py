@@ -4,12 +4,18 @@ import os
 import re
 import shutil
 
+_CLEAR_DUMP_DIR = True
+_ENABLE_DUMP = True
 _DUMP_DIR = "./dumps"
 
 def clear_dumps():
+    if not _CLEAR_DUMP_DIR:
+        return
     shutil.rmtree(_DUMP_DIR)
 
 def dump_tensor(tensor: torch.Tensor, name: str):
+    if not _ENABLE_DUMP:
+        return
     tensor_list = tensor.tolist()
     path = f"{_DUMP_DIR}/{name}.json"
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -17,6 +23,8 @@ def dump_tensor(tensor: torch.Tensor, name: str):
         json.dump(tensor_list, f)
 
 def dump_tensor_if_not_exists(tensor: torch.Tensor, name: str):
+    if not _ENABLE_DUMP:
+        return
     path = f"{_DUMP_DIR}/{name}.json"
     if not os.path.exists(path):
         dump_tensor(tensor, name)

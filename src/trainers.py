@@ -173,7 +173,7 @@ class TrainerInterface:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            directory = f"epoch_{epoch}/batch_{i + 1}"
+            directory = f"epoch_{epoch - 1}/batch_{i}"
             for i, layer in enumerate(self.model.layers):
                 dump_tensor(layer._weights, f"{directory}/param/initial/weights/{i}")
                 dump_tensor(layer._bias, f"{directory}/param/initial/bias/{i}")
@@ -183,14 +183,19 @@ class TrainerInterface:
             y_hat = self.model(X)
             dump_tensor(y_hat, f"{directory}/output")
             for i, layer in enumerate(self.model.layers):
-                dump_tensor(layer.v_ff, f"{directory}/post_forward_pre_jacobian/v_ff/{i}")
-                dump_tensor(layer.r, f"{directory}/post_forward_pre_jacobian/r/{i}")
+                dump_tensor(layer.v_ff, f"{directory}/post_forward_pre_backward/v_ff/{i}")
+                dump_tensor(layer.r, f"{directory}/post_forward_pre_backward/r/{i}")
 
             loss = self.model.calculate_loss(y_hat, y)
 
             self.optimizer.zero_grad()
             self.model.backward(y)
 
+            for i, layer in enumerate(self.model.layers):
+                dump_tensor(layer.v_ff, f"{directory}/post_backward/v_ff/{i}")
+                dump_tensor(layer.r_ff, f"{directory}/post_backward/r_ff/{i}")
+                dump_tensor(layer.r, f"{directory}/post_backward/r/{i}")
+                
             for i, layer in enumerate(self.model.layers):
                 dump_tensor(layer._weights.grad, f"{directory}/grad/weights/{i}")
                 dump_tensor(layer._bias.grad, f"{directory}/grad/bias/{i}")
