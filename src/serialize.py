@@ -16,6 +16,11 @@ def dump_tensor(tensor: torch.Tensor, name: str):
     with open(path, "w") as f:
         json.dump(tensor_list, f)
 
+def dump_tensor_if_not_exists(tensor: torch.Tensor, name: str):
+    path = f"{_DUMP_DIR}/{name}.json"
+    if not os.path.exists(path):
+        dump_tensor(tensor, name)
+
 def next_available_directory(name: str) -> str:
     directory_count = -1  # Start at -1 so 0 is the first available
     name_regex = re.compile(rf"{name}_(\d+)")

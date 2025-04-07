@@ -3,7 +3,7 @@ import torch
 from networks.network_interface import *
 from networks.layers import DFC_layer
 from networks.activation_function import *
-
+from src.serialize import dump_tensor_if_not_exists
 check_nan = lambda x: torch.isnan(x).any().item()
 
 class DFC_network(Network, JacobianInterface):
@@ -79,7 +79,18 @@ class DFC_network(Network, JacobianInterface):
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
+            dir_prefix = f"full_jacobian"
+            arbitrary_timestep = 10
+            should_dump = t == arbitrary_timestep
+            if should_dump:
+                for i, layer in enumerate(self.layers):
+                    dump_tensor_if_not_exists(layer.v_ff, f"{dir_prefix}/v_ff/{i}")
+
             _, Js = self._calculate_full_jacobian()
+
+            if should_dump:
+                for i, layer in enumerate(self.layers):
+                    dump_tensor_if_not_exists(Js[i], f"{dir_prefix}/js/{i}")
             
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
