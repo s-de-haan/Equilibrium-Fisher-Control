@@ -33,6 +33,7 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
         self.eta_ff = config.get("eta_ff", self.lr)
         self.k_i = config.get("k_i", 0.0)
         self.k_d = config.get("k_d", 0.0)
+        self.sample_wise = config.get("sample_wise", True)  # Enable sample-wise updates
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -105,13 +106,20 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
         """
         Standard DFC learning rule:
         Update weights using the difference between steady-state and feedforward activations.
-        ΔW = η · (a_ss - a_ff) · a_ff_prev^T
+        Can be performed either sample-wise or batch-wise.
         """
         for i, layer in enumerate(self.layers):
             delta = layer.r - layer.r_ff
             input_ff = layer.r_prev
-            grad_w = torch.bmm(delta.unsqueeze(2), input_ff.unsqueeze(1)).mean(dim=0)
-            grad_b = delta.mean(dim=0)
-            layer.weights.data += self.eta_ff * grad_w
-            layer.bias.data += self.eta_ff * grad_b
+
+            if self.sample_wise:
+                for b in range(delta.shape[0]):
+                    dw = torch.ger(delta[b], input_ff[b])
+                    layer.weights.data += self.eta_ff * dw
+                    layer.bias.data += self.eta_ff * delta[b]
+            else:
+                grad_w = torch.bmm(delta.unsqueeze(2), input_ff.unsqueeze(1)).mean(dim=0)
+                grad_b = delta.mean(dim=0)
+                layer.weights.data += self.eta_ff * grad_w
+                layer.bias.data += self.eta_ff * grad_b
 
