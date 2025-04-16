@@ -1,0 +1,71 @@
+program: trainer_classIL.py
+
+method: grid
+metric:
+  name: final_avg_accuracy
+  goal: maximize
+
+parameters:
+  method:
+    value: dyn_dfc
+
+  num_workers:
+    value: 0
+
+  seed:
+    distribution: categorical
+    values: [42, 69]
+
+  batch_size:
+    value: 256
+
+  optimizer:
+    value: Adam
+
+  lr:
+    value: 0.001  # Unused directly in DynDFC, but kept for compatibility
+
+  eta_ff:
+    distribution: categorical
+    values: [1e-3, 3e-3, 1e-2]
+
+  eta_dyn:
+    distribution: categorical
+    values: [0.1, 0.3, 1.0]
+
+  k_p:
+    distribution: categorical
+    values: [1.0, 2.0]
+
+  k_i:
+    distribution: categorical
+    values: [0.0, 0.1]
+
+  k_d:
+    distribution: categorical
+    values: [0.0, 0.01, 0.05]
+
+  dt_di:
+    value: 0.0016
+
+  tmax_di:
+    value: 500
+
+  time_constant_ratio:
+    value: 0.2
+
+  eps:
+    distribution: categorical
+    values: [1e-3, 1e-4]
+
+  alpha_di:
+    value: 1e-4  # Acts as damping in controller
+
+  target_lr:
+    value: 1e-2  # Still used in CE/MSE target shaping
+
+  loss_fn:
+    value: ce
+
+  setting:
+    value: classIL
