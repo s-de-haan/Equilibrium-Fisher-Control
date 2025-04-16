@@ -33,7 +33,6 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
         self.eta_ff = config.get("eta_ff", self.lr)
         self.k_i = config.get("k_i", 0.0)
         self.k_d = config.get("k_d", 0.0)
-        self.sample_wise = config.get("sample_wise", True)  # Enable sample-wise updates
 
     @torch.no_grad()
     def _dynamical_inversion(self):
@@ -88,38 +87,26 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
     @torch.no_grad()
     def _update_W_dyn(self, l, feedback_dyn, q_u):
         """
-        Hebbian-style update for dynamic feedback weights during convergence.
-
-        Parameters:
-        - l: current layer index
-        - feedback_dyn: top-down signal from W_dyn[l] * a[l+1]
-        - q_u: full controller signal projected through Q
+        Per-sample Hebbian-style update for W_dyn during convergence.
         """
         r_next = self.layers[l + 1].r.detach()
         modulation_abs = feedback_dyn.detach().abs()
-        hebbian_update = torch.bmm(modulation_abs.unsqueeze(2), r_next.unsqueeze(1))
-        delta = hebbian_update.mean(dim=0) * self.eta_dyn
-        self.W_dyn[l].data += delta
+
+        for b in range(modulation_abs.shape[0]):
+            delta = torch.ger(modulation_abs[b], r_next[b])
+            self.W_dyn[l].data += self.eta_dyn * delta
 
     @torch.no_grad()
     def update_weights(self):
         """
-        Standard DFC learning rule:
-        Update weights using the difference between steady-state and feedforward activations.
-        Can be performed either sample-wise or batch-wise.
+        Apply the standard DFC learning rule per sample:
+        ΔW = η · (a_ss - a_ff) · a_ff_prev^T
         """
         for i, layer in enumerate(self.layers):
             delta = layer.r - layer.r_ff
             input_ff = layer.r_prev
 
-            if self.sample_wise:
-                for b in range(delta.shape[0]):
-                    dw = torch.ger(delta[b], input_ff[b])
-                    layer.weights.data += self.eta_ff * dw
-                    layer.bias.data += self.eta_ff * delta[b]
-            else:
-                grad_w = torch.bmm(delta.unsqueeze(2), input_ff.unsqueeze(1)).mean(dim=0)
-                grad_b = delta.mean(dim=0)
-                layer.weights.data += self.eta_ff * grad_w
-                layer.bias.data += self.eta_ff * grad_b
-
+            for b in range(delta.shape[0]):
+                dw = torch.ger(delta[b], input_ff[b])
+                layer.weights.data += self.eta_ff * dw
+                layer.bias.data += self.eta_ff * delta[b]
