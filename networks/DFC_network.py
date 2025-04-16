@@ -263,3 +263,101 @@ class DFC_Mult_network_clean(Network, JacobianInterface, FisherInterface):
             if converged_mask.all():
                 break
             u_current = u_next
+
+class DFC_Mult_network_dynamic_feedback(Network, JacobianInterface, WdynInterface):
+    def __init__(self, config, name="DFC_Mult_network_dynamic_feedback"):
+        super().__init__(DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+
+        # Dynamic feedback weights: W_dyn[l] projects from layer l+1 to l
+        self.W_dyn = nn.ParameterList()
+        for l in range(len(self.layers) - 1):  # Skip output layer
+            shape = (self.layer_sizes[l], self.layer_sizes[l + 1])
+            W_dyn_l = nn.Parameter(torch.zeros(*shape), requires_grad=False)
+            self.W_dyn.append(W_dyn_l)
+
+        self.eta_dyn = config.get("eta_dyn", 1e-3)         # Learning rate for W_dyn
+        self.eta_ff = config.get("eta_ff", self.lr)        # Learning rate for feedforward weights
+        self.k_i = config.get("k_i", 0.0)                  # Integral gain
+        self.k_d = config.get("k_d", 0.0)                  # Derivative gain
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        u_current = torch.zeros((self.bzs, self.output_size))
+        error_integral = torch.zeros((self.bzs, self.output_size))
+        prev_output = self.layers[-1].r.clone()
+
+        for t in range(1, self.tmax):
+            output = self.layers[-1].r
+            error = output - self.targets
+            error_integral += self.dt * error
+            a_dot = (output - prev_output) / self.dt
+            prev_output = output.clone()
+
+            # PID controller
+            _, Js = self._calculate_full_jacobian()
+            J_top = Js[-1]
+            u_t = self.k_p * error + self.k_i * error_integral + self.k_d * torch.bmm(J_top, a_dot.unsqueeze(2)).squeeze(2)
+            q_u = torch.matmul(self.Q, u_t.T).T  # Apply Q once to full control signal
+
+            # Forward pass with W_dyn modulation
+            for i, layer in enumerate(self.layers):
+                r_prev = self.layers[i - 1].r if i != 0 else self.input
+                layer.r_prev = r_prev
+                layer.v_ff = r_prev @ layer.weights.T + layer.bias.unsqueeze(0)
+                layer.r_ff = layer.activation_fn(layer.v_ff)
+
+                if i < len(self.layers) - 1:
+                    feedback_dyn = torch.matmul(self.W_dyn[i], self.layers[i + 1].r.T).T
+                    modulation = torch.tanh(feedback_dyn) + 1.0
+                    self._update_W_dyn(i, modulation, q_u)  # Update W_dyn during convergence
+                else:
+                    modulation = torch.ones_like(layer.r_ff)
+
+                layer.r = layer.r + self.dt / self.time_constant_ratio * (modulation * layer.r_ff - layer.r)
+
+            # Convergence check
+            converged_mask |= torch.norm(u_t - u_current, dim=1) < self.eps
+            if converged_mask.all():
+                break
+            u_current = u_t
+
+        # Final state update
+        for i, layer in enumerate(self.layers):
+            layer.r_prev = self.layers[i - 1].r if i != 0 else self.input
+            layer.v_ff = layer.r_prev @ layer.weights.T + layer.bias.unsqueeze(0)
+            layer.r_ff = layer.activation_fn(layer.v_ff)
+
+        # Feedforward weight update (after convergence)
+        self._update_weights()
+
+    @torch.no_grad()
+    def _update_W_dyn(self, l, modulation, q_u):
+        r_next = self.layers[l + 1].r.detach()
+        modulation_abs = modulation.detach().abs()
+        q_u_detached = q_u.detach()
+
+        hebbian_update = torch.bmm(modulation_abs.unsqueeze(2), r_next.unsqueeze(1))
+        delta = hebbian_update.mean(dim=0) * self.eta_dyn
+        self.W_dyn[l].data += delta
+
+    @torch.no_grad()
+    def _update_weights(self):
+        J, _ = self._calculate_full_jacobian()
+        J_T = J.transpose(1, 2)
+
+        error = self._compute_error(self.y_hat, self.targets).unsqueeze(2)
+        u = torch.linalg.solve(
+            torch.bmm(J, J_T) + self.alpha * torch.eye(J.shape[1]), error
+        )
+        psi = torch.bmm(J_T, u).squeeze(-1)
+        psis = torch.split(psi, self.layer_sizes, dim=1)
+
+        for i, layer in enumerate(self.layers):
+            layer.r_prev = self.layers[i - 1].r if i != 0 else self.input
+            grad_w = torch.bmm(psis[i].unsqueeze(2), layer.r_prev.unsqueeze(1)).mean(dim=0)
+            grad_b = psis[i].mean(dim=0)
+
+            layer.weights.data -= self.eta_ff * grad_w
+            layer.bias.data -= self.eta_ff * grad_b
