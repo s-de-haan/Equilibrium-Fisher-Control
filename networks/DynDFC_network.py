@@ -16,6 +16,7 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
     - Additive modulation of activity using both W_dyn and Q · u feedback
     - A standard DFC update rule based on the difference between steady-state
       and feedforward activity
+    - Gated feedback learning using |a_dot| to suppress updates at equilibrium
     """
 
     def __init__(self, config, name="DynDFC_network"):
@@ -48,18 +49,19 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
         # Store initial feedforward activations (used for learning after convergence)
         for layer in self.layers:
             layer.r_ff = layer.r.clone()
+            layer.r_prev_state = layer.r.clone()
 
         for t in range(1, self.tmax):
             output = self.layers[-1].r
             error = output - self.targets
             error_integral += self.dt * error
-            a_dot = (output - prev_output) / self.dt
+            a_dot_output = (output - prev_output) / self.dt
             prev_output = output.clone()
 
             # PID control signal
             _, Js = self._calculate_full_jacobian()
             J_top = Js[-1]
-            u_t = self.k_p * error + self.k_i * error_integral + self.k_d * torch.bmm(J_top, a_dot.unsqueeze(2)).squeeze(2)
+            u_t = self.k_p * error + self.k_i * error_integral + self.k_d * torch.bmm(J_top, a_dot_output.unsqueeze(2)).squeeze(2)
             q_u = torch.matmul(self.Q, u_t.T).T
 
             for i, layer in enumerate(self.layers):
@@ -68,12 +70,15 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
                 layer.v_ff = r_prev @ layer.weights.T + layer.bias.unsqueeze(0)
                 layer.r_ff = layer.activation_fn(layer.v_ff)
 
+                a_dot_l = (layer.r - layer.r_prev_state) / self.dt
+                layer.r_prev_state = layer.r.clone()
+
                 if i < len(self.layers) - 1:
                     feedback_dyn = torch.matmul(self.W_dyn[i], self.layers[i + 1].r.T).T
                     controller_mod = torch.matmul(Js[i].transpose(1, 2), q_u.unsqueeze(2)).squeeze(2)
                     combined_signal = feedback_dyn + controller_mod
                     modulation = torch.tanh(combined_signal) + 1
-                    self._update_W_dyn(i, feedback_dyn, q_u)
+                    self._update_W_dyn(i, a_dot_l.abs(), q_u)
                 else:
                     modulation = torch.ones_like(layer.r_ff)
 
@@ -85,15 +90,14 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
             u_current = u_t
 
     @torch.no_grad()
-    def _update_W_dyn(self, l, feedback_dyn, q_u):
+    def _update_W_dyn(self, l, a_dot_abs, q_u):
         """
-        Per-sample Hebbian-style update for W_dyn during convergence.
+        Gated Hebbian update for W_dyn using |a_dot| as gate.
+        Only updates during active convergence, not at equilibrium.
         """
         r_next = self.layers[l + 1].r.detach()
-        modulation_abs = feedback_dyn.detach().abs()
-
-        for b in range(modulation_abs.shape[0]):
-            delta = torch.ger(modulation_abs[b], r_next[b])
+        for b in range(a_dot_abs.shape[0]):
+            delta = torch.ger(a_dot_abs[b], r_next[b])
             self.W_dyn[l].data += self.eta_dyn * delta
 
     @torch.no_grad()
