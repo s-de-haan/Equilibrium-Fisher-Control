@@ -96,9 +96,11 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
         Only updates during active convergence, not at equilibrium.
         """
         r_next = self.layers[l + 1].r.detach()
-        for b in range(a_dot_abs.shape[0]):
-            delta = torch.ger(a_dot_abs[b], r_next[b])
-            self.W_dyn[l].data += self.eta_dyn * delta
+      for b in range(a_dot_abs.shape[0]):
+            if torch.norm(a_dot_abs[b]) > self.eps:
+                delta = torch.ger(a_dot_abs[b], r_next[b])
+                self.W_dyn[l].data += self.eta_dyn * delta
+
 
     @torch.no_grad()
     def update_weights(self):
