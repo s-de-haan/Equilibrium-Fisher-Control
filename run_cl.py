@@ -1,21 +1,22 @@
-from networks.BP_network import *
-from networks.EWC_network import *
-from networks.EFC_network import *
-from networks.DFC_network import *
-from networks.DynDFC_network import DynDFC_network  # ✅ NEW
+import torch
+from networks.BP_network import BP_network
+from networks.EWC_network import EWC_network
+from networks.EFC_network import EFC_network
+from networks.DFC_network import DFC_network
+from networks.DynDFC_network import DynDFC_network
 from src.datasets import SplitMNIST
 from src.trainers import TrainerCL
 from src.utils import dotdict
 
 
 def main():
-    # Training configuration
-    config = {
+    # Configuration for continual learning
+    cfg = dotdict({
         "layers": [784, 400, 400, 2],
         "num_classes": 2,
         "lr": 1e-3,
-        "eta_ff": 1e-3,        # ✅ NEW
-        "eta_dyn": 0.1,        # ✅ NEW
+        "eta_ff": 1e-3,
+        "eta_dyn": 0.1,
         "batch_size": 256,
         "epochs": 4,
         "mode": "di",
@@ -35,25 +36,25 @@ def main():
         "time_constant_ratio": 0.2,
         "tmax_di": 500,
         "k_p": 1.0,
-        "k_i": 0.0,           # ✅ NEW
-        "k_d": 0.0,           # ✅ NEW
+        "k_i": 0.0,
+        "k_d": 0.0,
         "eps": 1e-4,
         "save": False,
         "importance_ewc": 1.0,
         "beta_efc": 1000.0,
-    }
-    config = dotdict(config)
+    })
 
-    # Load continual learning tasks
-    tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
+    # Load SplitMNIST tasks
+    tasks = SplitMNIST(config=cfg).get_all_tasks_dataloaders()
 
-    # Instantiate model
-    model = DynDFC_network(config=config)  # ✅ NEW
+    # Initialize DynDFC for continual learning
+    model = DynDFC_network(config=cfg)
 
-    # Launch continual learning trainer
-    trainer = TrainerCL(model, tasks_dataloaders, config)
+    # Train with continual learning framework
+    trainer = TrainerCL(model, tasks, cfg)
     trainer.train()
 
 
 if __name__ == "__main__":
     main()
+```
