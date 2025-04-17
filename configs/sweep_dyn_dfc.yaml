@@ -19,7 +19,7 @@ def parse_args():
                         help='Learning rate for feedforward weights')
     parser.add_argument('--eta_dyn', type=float, default=0.1,
                         help='Learning rate for feedback weights')
-    parser.add_argument('--batch_size', type=int, default=256, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=1, help='Batch size')
     parser.add_argument('--epochs', type=int, default=4, help='Number of epochs')
     parser.add_argument('--mode', type=str, default='di', choices=['di', 'ndi'],
                         help='Dynamic inversion mode')
