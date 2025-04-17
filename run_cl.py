@@ -1,4 +1,5 @@
 import torch
+from torch.utils.data import ConcatDataset, DataLoader
 from networks.BP_network import BP_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
@@ -43,9 +44,29 @@ def main():
         "importance_ewc": 1.0,
         "beta_efc": 1000.0,
     })
+    
+    # Load SplitMNIST tasks and concatenate into one dataset
+    raw_tasks = SplitMNIST(config=cfg).get_all_tasks_dataloaders()
+    train_datasets = [t[0].dataset for t in raw_tasks]
+    test_datasets  = [t[1].dataset for t in raw_tasks]
 
-    # Load SplitMNIST tasks
-    tasks = SplitMNIST(config=cfg).get_all_tasks_dataloaders()
+    train_all = ConcatDataset(train_datasets)
+    test_all  = ConcatDataset(test_datasets)
+
+    train_loader_all = DataLoader(
+        train_all,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        num_workers=cfg.num_workers
+    )
+    test_loader_all = DataLoader(
+        test_all,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=cfg.num_workers
+    )
+
+    tasks = [(train_loader_all, test_loader_all)]
 
     # Initialize DynDFC for continual learning
     model = DynDFC_network(config=cfg)
@@ -57,4 +78,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
