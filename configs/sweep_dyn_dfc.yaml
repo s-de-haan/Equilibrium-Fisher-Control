@@ -1,71 +1,90 @@
-program: trainer_classIL.py
+import argparse
+import wandb
+from omegaconf import OmegaConf
 
-method: grid
-metric:
-  name: final_avg_accuracy
-  goal: maximize
+from networks.DynDFC_network import DynDFC_network
+from src.datasets import SplitMNIST, ClassILMNIST
+from src.trainers import TrainerCL
+from src.utils import str2bool
 
-parameters:
-  method:
-    value: dyn_dfc
 
-  num_workers:
-    value: 0
+def parse_args():
+    parser = argparse.ArgumentParser(description="Class-incremental learning with DynDFC")
+    # Hyperparameters for sweep
+    parser.add_argument('--method', type=str, default='dyn_dfc')
+    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--optimizer', type=str, default='Adam')
+    parser.add_argument('--lr', type=float, default=1e-3)
+    parser.add_argument('--eta_ff', type=float, nargs='+', default=[1e-3])
+    parser.add_argument('--eta_dyn', type=float, nargs='+', default=[0.1])
+    parser.add_argument('--k_p', type=float, nargs='+', default=[1.0])
+    parser.add_argument('--k_i', type=float, nargs='+', default=[0.0])
+    parser.add_argument('--k_d', type=float, nargs='+', default=[0.0])
+    parser.add_argument('--dt_di', type=float, default=0.0016)
+    parser.add_argument('--tmax_di', type=int, default=500)
+    parser.add_argument('--time_constant_ratio', type=float, default=0.2)
+    parser.add_argument('--eps', type=float, nargs='+', default=[1e-4])
+    parser.add_argument('--alpha_di', type=float, default=1e-4)
+    parser.add_argument('--target_lr', type=float, default=1e-2)
+    parser.add_argument('--loss_fn', type=str, default='ce')
+    parser.add_argument('--setting', type=str, default='classIL')
+    parser.add_argument('--epochs', type=int, default=4)
+    parser.add_argument('--save', type=str2bool, default='false')
+    args = parser.parse_args()
+    return args
 
-  seed:
-    distribution: categorical
-    values: [42, 69]
 
-  batch_size:
-    value: 256
+def main():
+    args = parse_args()
+    # Assume wandb sweep sets args via wandb.config
+    if wandb.run is not None:
+        for k, v in wandb.config.items():
+            setattr(args, k, v)
 
-  optimizer:
-    value: Adam
+    # Build config dict
+    config = OmegaConf.create({
+        'layers': [784, 400, 400, 2],
+        'num_classes': 2,
+        'lr': args.lr,
+        'eta_ff': args.eta_ff,
+        'eta_dyn': args.eta_dyn,
+        'batch_size': args.batch_size,
+        'epochs': args.epochs,
+        'mode': 'di',
+        'num_workers': 0,
+        'loss_fn': args.loss_fn,
+        'optimizer': args.optimizer,
+        'scheduler': 'CosineAnnealingLR',
+        'device': 'cuda',
+        'seed': args.seed,
+        'dt_di': args.dt_di,
+        'time_constant_ratio': args.time_constant_ratio,
+        'tmax_di': args.tmax_di,
+        'k_p': args.k_p,
+        'k_i': args.k_i,
+        'k_d': args.k_d,
+        'eps': args.eps,
+        'alpha_di': args.alpha_di,
+        'target_lr': args.target_lr,
+        'settings': args.setting,
+    })
 
-  lr:
-    value: 0.001  # Unused directly in DynDFC, but kept for compatibility
+    wandb.init(
+        project='classIL_DynDFC_sweep',
+        config=config,
+        reinit=True
+    )
 
-  eta_ff:
-    distribution: categorical
-    values: [1e-3, 3e-3, 1e-2]
+    # Load dataset
+    tasks = ClassILMNIST(config=config).get_all_tasks_dataloaders()
 
-  eta_dyn:
-    distribution: categorical
-    values: [0.1, 0.3, 1.0]
+    # Instantiate model
+    model = DynDFC_network(config=config)
 
-  k_p:
-    distribution: categorical
-    values: [1.0, 2.0]
+    # Trainer
+    trainer = TrainerCL(model, tasks, config)
+    trainer.train()
 
-  k_i:
-    distribution: categorical
-    values: [0.0, 0.1]
-
-  k_d:
-    distribution: categorical
-    values: [0.0, 0.01, 0.05]
-
-  dt_di:
-    value: 0.0016
-
-  tmax_di:
-    value: 500
-
-  time_constant_ratio:
-    value: 0.2
-
-  eps:
-    distribution: categorical
-    values: [1e-3, 1e-4]
-
-  alpha_di:
-    value: 1e-4  # Acts as damping in controller
-
-  target_lr:
-    value: 1e-2  # Still used in CE/MSE target shaping
-
-  loss_fn:
-    value: ce
-
-  setting:
-    value: classIL
+if __name__ == '__main__':
+    main()
