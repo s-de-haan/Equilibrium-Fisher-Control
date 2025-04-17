@@ -411,3 +411,8 @@ class FisherInterface:
                     fisher_norm += self._fisher[full_name]**2
 
         return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+
+
+class WdynInterface:
+    """Marker interface for networks that implement dynamic feedback weights (W_dyn)."""
+    pass
