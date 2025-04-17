@@ -12,7 +12,7 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
     Implements:
     - PID controller feedback
     - Feedback modulation weights W_dyn updated during convergence
-    - Feedforward weights W updated after convergence
+    - Feedforward weights W updated during convergence (gated)
     - Convergence based on output activity change (not controller signal)
     - Inference via dynamics using W_dyn, stopping on output convergence
     """
@@ -67,7 +67,9 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
                     controller_mod = torch.matmul(Js[i].transpose(1, 2), q_u.unsqueeze(2)).squeeze(2)
                     combined_signal = feedback_dyn + controller_mod
                     modulation = torch.tanh(combined_signal) + 1
-                    self._update_W_dyn(i, a_dot_output.norm(dim=1, keepdim=True), q_u)
+
+                    self._update_W_dyn(i, a_dot_l, self.layers[i + 1].r)
+                    self._update_forward_weights(i, a_dot_l, r_prev)
                 else:
                     modulation = torch.ones_like(layer.r_ff)
 
@@ -78,22 +80,23 @@ class DynDFC_network(Network, JacobianInterface, WdynInterface):
                 break
 
     @torch.no_grad()
-    def _update_W_dyn(self, l, gating_signal, q_u):
-        r_next = self.layers[l + 1].r.detach()
-        for b in range(gating_signal.shape[0]):
-            if gating_signal[b] > self.eps:
-                delta = torch.ger(q_u[b], r_next[b])
+    def _update_W_dyn(self, l, a_dot, r_next):
+        for b in range(a_dot.shape[0]):
+            if a_dot[b].norm() > self.eps:
+                delta = torch.ger(a_dot[b], r_next[b])
                 self.W_dyn[l].data += self.eta_dyn * delta
 
     @torch.no_grad()
+    def _update_forward_weights(self, l, a_dot, input_ff):
+        for b in range(a_dot.shape[0]):
+            if self.eps < a_dot[b].norm() < 5 * self.eps:
+                dw = torch.ger(a_dot[b], input_ff[b])
+                self.layers[l].weights.data += self.eta_ff * dw
+                self.layers[l].bias.data += self.eta_ff * a_dot[b]
+
+    @torch.no_grad()
     def update_weights(self):
-        for i, layer in enumerate(self.layers):
-            delta = layer.r - layer.r_ff
-            input_ff = layer.r_prev
-            for b in range(delta.shape[0]):
-                dw = torch.ger(delta[b], input_ff[b])
-                layer.weights.data += self.eta_ff * dw
-                layer.bias.data += self.eta_ff * delta[b]
+        pass  # Feedforward weights are now updated during convergence
 
     @torch.no_grad()
     def dynamic_inference(self, x):
