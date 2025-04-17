@@ -5,39 +5,56 @@ from omegaconf import OmegaConf
 from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
-from networks.EFC_network import EFC_network
-from networks.EFC_network import EFC_network_v2, EFC_network_v3 
+from networks.EFC_network import EFC_network, EFC_network_v2, EFC_network_v3
 from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
 from networks.DynDFC_network import DynDFC_network
 
 from src.datasets import SplitMNIST
-from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
+from src.dataloaders import (
+    TaskILMNIST, DomainILMNIST, ClassILMNIST,
+    TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
+)
 from src.trainers import WandBTrainerCL
 from src.trainers_taskIL import WandBTrainerCLTaskIL
 from src.utils import str2bool
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
 
     # Network architecture & training hyperparameters:
-    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2], help="Network layer sizes")
+    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
+                        help="Network layer sizes")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--eta_dyn", type=float, default=0.1, help="Learning rate for feedback weights W_dyn")
-    parser.add_argument("--eta_ff", type=float, default=1e-3, help="Learning rate for feedforward weights")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"], help="Dynamic inversion mode")
-    parser.add_argument("--num_workers", type=int, default=8, help="Dataloader workers")
-    parser.add_argument("--loss_fn", type=str, default='ce', help="Loss function: 'ce' or 'mse'")
-    parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
-    parser.add_argument("--scheduler", type=str, default="CosineAnnealingLR", help="Scheduler")
+    parser.add_argument("--eta_dyn", type=float, default=0.1,
+                        help="Learning rate for feedback weights W_dyn")
+    parser.add_argument("--eta_ff", type=float, default=1e-3,
+                        help="Learning rate for feedforward weights")
+    parser.add_argument("--batch_size", type=int, default=256,
+                        help="Batch size")
+    parser.add_argument("--epochs", type=int, default=20,
+                        help="Number of epochs")
+    parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
+                        help="Dynamic inversion mode")
+    parser.add_argument("--num_workers", type=int, default=8,
+                        help="Dataloader workers")
+    parser.add_argument("--loss_fn", type=str, default='ce',
+                        help="Loss function: 'ce' or 'mse'")
+    parser.add_argument("--optimizer", type=str, default="Adam",
+                        choices=["Adam", "SGD"], help="Optimizer")
+    parser.add_argument("--scheduler", type=str, default="CosineAnnealingLR",
+                        help="Scheduler")
 
     # Environment settings:
-    parser.add_argument("--device", type=str, default="cuda", help="Device")
-    parser.add_argument("--output_dir", type=str, default="./outputs", help="Output directory")
-    parser.add_argument("--seed", type=int, default=1337, help="Random seed")
-    parser.add_argument("--save", type=str2bool, default="false", help="Whether to save the model")
+    parser.add_argument("--device", type=str, default="cuda",
+                        help="Device")
+    parser.add_argument("--output_dir", type=str, default="./outputs",
+                        help="Output directory")
+    parser.add_argument("--seed", type=int, default=1337,
+                        help="Random seed")
+    parser.add_argument("--save", type=str2bool, default="false",
+                        help="Whether to save the model")
 
     # EFC-specific hyperparameters:
     parser.add_argument("--clamp", type=str2bool, default="false")
@@ -50,31 +67,47 @@ def parse_args():
     parser.add_argument("--importance_ewc", type=float, default=1.0)
 
     # Training method selector:
-    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "dyn_dfc", "efc_bp", "efc_v2", "efc_v3"], help="Training method")
+    parser.add_argument("--method", type=str, default="efc",
+                        choices=["ewc", "efc", "bp", "dfc", "dyn_dfc", "efc_bp", "efc_v2", "efc_v3"],
+                        help="Training method")
 
     # Dynamic inversion controller parameters:
-    parser.add_argument("--dt_di", type=float, default=0.008)
-    parser.add_argument("--time_constant_ratio", type=float, default=0.2)
-    parser.add_argument("--tmax_di", type=int, default=500)
-    parser.add_argument("--k_p", type=float, default=2.0)
-    parser.add_argument("--k_i", type=float, default=0.0)
-    parser.add_argument("--k_d", type=float, default=0.0)
-    parser.add_argument("--eps", type=float, default=1e-4)
+    parser.add_argument("--dt_di", type=float, default=0.008,
+                        help="Integration timestep for dynamic inversion")
+    parser.add_argument("--time_constant_ratio", type=float, default=0.2,
+                        help="Time constant ratio for dynamics")
+    parser.add_argument("--tmax_di", type=int, default=500,
+                        help="Max inference steps for dynamic inversion")
+    parser.add_argument("--k_p", type=float, default=2.0,
+                        help="Proportional gain for PID controller")
+    parser.add_argument("--k_i", type=float, default=0.0,
+                        help="Integral gain for PID controller")
+    parser.add_argument("--k_d", type=float, default=0.0,
+                        help="Derivative gain for PID controller")
+    parser.add_argument("--eps", type=float, default=1e-4,
+                        help="Convergence threshold for dynamics")
 
-    parser.add_argument("--dataset", type=str, default="MNIST", choices=["MNIST", "CIFAR10"])
-    parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"])
-    parser.add_argument("--setting", type=str, default="domainIL", choices=["domainIL", "taskIL", "classIL"])
-    parser.add_argument("--run_name", type=str, default="default")
-    parser.add_argument("--fisher_normalization", type=str2bool, default="false")
-    parser.add_argument("--stability_gap", type=str2bool, default="false")
+    parser.add_argument("--dataset", type=str, default="MNIST",
+                        choices=["MNIST", "CIFAR10"], help="Dataset")
+    parser.add_argument("--flatten_imgs", type=str, default="default",
+                        choices=["default", "True", "False"], help="Flatten images flag")
+    parser.add_argument("--setting", type=str, default="domainIL",
+                        choices=["domainIL", "taskIL", "classIL"], help="Continual learning setting")
+    parser.add_argument("--run_name", type=str, default="default",
+                        help="WandB run name")
+    parser.add_argument("--fisher_normalization", type=str2bool, default="false",
+                        help="Fisher normalization for EWC")
+    parser.add_argument("--stability_gap", type=str2bool, default="false",
+                        help="Use stability gap metric")
 
     args, unknown = parser.parse_known_args()
     if unknown:
         print("Ignoring unknown CLI arguments:", unknown)
     return args
 
-def get_model(model_name: str, setting: str, config):
-    if setting == "domainIL" or setting == "classIL":
+
+def get_model(method: str, setting: str, config):
+    if setting in ("domainIL", "classIL"):
         models = {
             "bp": BP_network,
             "dfc": DFC_network,
@@ -82,63 +115,60 @@ def get_model(model_name: str, setting: str, config):
             "ewc": EWC_network,
             "efc": EFC_network,
             "efc_v2": EFC_network_v2,
-            "efc_v3": EFC_network_v3
+            "efc_v3": EFC_network_v3,
         }
     elif setting == "taskIL":
         models = {
             "bp": TaskIncrementalBP_network,
             "efc_bp": TaskIncremental_EFC_BP_network,
-            "efc": TaskIncremental_EFC_network
+            "efc": TaskIncremental_EFC_network,
         }
     else:
-        raise ValueError("Invalid setting")
-    return models[model_name](config)
+        raise ValueError(f"Invalid setting: {setting}")
+    return models[method](config)
+
 
 def get_dataset(setting: str, dataset: str, config):
     if setting == "domainIL" and dataset == "MNIST":
         return DomainILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "taskIL" and dataset == "MNIST":
+    if setting == "taskIL" and dataset == "MNIST":
         return TaskILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "classIL" and dataset == "MNIST":
+    if setting == "classIL" and dataset == "MNIST":
         return ClassILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "domainIL" and dataset == "CIFAR10":
+    if setting == "domainIL" and dataset == "CIFAR10":
         return DomainILCIFAR10(config).get_all_tasks_dataloaders()
-    elif setting == "taskIL" and dataset == "CIFAR10":
+    if setting == "taskIL" and dataset == "CIFAR10":
         return TaskILCIFAR10(config).get_all_tasks_dataloaders()
-    elif setting == "classIL" and dataset == "CIFAR10":
+    if setting == "classIL" and dataset == "CIFAR10":
         return ClassILCIFAR10(config).get_all_tasks_dataloaders()
-    else:
-        raise ValueError("Invalid setting or dataset")
+    raise ValueError(f"Invalid setting/dataset combo: {setting}/{dataset}")
+
 
 def main():
     args = parse_args()
-
     if wandb.run is not None:
-        sweep_config = dict(wandb.config)
-        for key, value in sweep_config.items():
+        for key, value in dict(wandb.config).items():
             setattr(args, key, value)
-
     config = OmegaConf.create(vars(args))
-
     print("Final configuration:")
     print(OmegaConf.to_yaml(config))
 
     model = get_model(config.method, config.setting, config)
-    tasks_dataloaders = get_dataset(config.setting, config.dataset, config)
-    project_name = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
+    dataloaders = get_dataset(config.setting, config.dataset, config)
+    project = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
 
     wandb.init(
-        project=project_name,
+        project=project,
         name=config.run_name,
         entity="equilibrium-fisher-control",
         config=OmegaConf.to_container(config)
     )
-
     if config.setting == "taskIL":
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
+        trainer = WandBTrainerCLTaskIL(model, dataloaders, config)
     else:
-        trainer = WandBTrainerCL(model, tasks_dataloaders, config)
+        trainer = WandBTrainerCL(model, dataloaders, config)
     trainer.train()
 
 if __name__ == "__main__":
     main()
+```
