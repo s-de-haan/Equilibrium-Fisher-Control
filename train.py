@@ -1,7 +1,8 @@
-```python
 import argparse
 import wandb
 from omegaconf import OmegaConf
+import torch
+from torch.utils.data import ConcatDataset, DataLoader
 
 from networks.DynDFC_network import DynDFC_network
 from src.datasets import SplitMNIST
@@ -56,11 +57,9 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--save', type=str2bool, default='false', help='Save model')
 
-    # Continual-learning setting
-    parser.add_argument('--setting', type=str, default='classIL', choices=['domainIL', 'taskIL', 'classIL'],
-                        help='Continual learning setting')
-    parser.add_argument('--dataset', type=str, default='MNIST', choices=['MNIST', 'CIFAR10'],
-                        help='Dataset for CL')
+    # Continual-learning setting (unused for random sampling)
+    parser.add_argument('--setting', type=str, default='classIL', help='Continual learning setting')
+    parser.add_argument('--dataset', type=str, default='MNIST', help='Dataset for CL')
 
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -70,7 +69,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    # Override with wandb configs when in a sweep
+    # Incorporate WandB sweep parameters
     if wandb.run is not None:
         for k, v in wandb.config.items():
             setattr(args, k, v)
@@ -85,15 +84,34 @@ def main():
         reinit=True
     )
 
-    # Load data: use SplitMNIST but treat first task as single stream
-    all_tasks = SplitMNIST(config=config).get_all_tasks_dataloaders()
-    train_loader, test_loader = all_tasks[0]
-    tasks = [(train_loader, test_loader)]
+    # Load all task splits, then concatenate into a single dataset
+    raw_tasks = SplitMNIST(config=config).get_all_tasks_dataloaders()
+    train_datasets = [task[0].dataset for task in raw_tasks]
+    test_datasets  = [task[1].dataset for task in raw_tasks]
+
+    train_all = ConcatDataset(train_datasets)
+    test_all  = ConcatDataset(test_datasets)
+
+    train_loader_all = DataLoader(
+        train_all,
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers
+    )
+    test_loader_all = DataLoader(
+        test_all,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers
+    )
+
+    # Wrap into tasks list for TrainerCL compatibility
+    tasks = [(train_loader_all, test_loader_all)]
 
     # Instantiate DynDFC model
     model = DynDFC_network(config=config)
 
-    # Train with TrainerCL
+    # Train
     trainer = TrainerCL(model, tasks, config)
     trainer.train()
 
