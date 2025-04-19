@@ -3,12 +3,9 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
-import numpy as np
 from src.utils import str2bool
 
 # Base dataset class (handles image conversion)
-### CIFAR10 datasets can be found below. 
-
 class BaseMNISTDataset(Dataset):
     def __init__(self, device, data, targets, classes, transform=None, setting = None, flatten = True):
         self.data = data  # Move data to specified device
@@ -90,12 +87,25 @@ class TaskILMNIST:
         # Create datasets
         train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, one_hot_classes, self.transform, flatten=self.flatten)
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform, flatten=self.flatten)
-
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,  
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size,
+            shuffle=False, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
         
         return train_loader, test_loader
     
@@ -105,8 +115,7 @@ class TaskILMNIST:
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
         ]
 
-# Class Incremental Learning class
-
+# Domain Incremental Learning class
 class DomainILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
@@ -147,11 +156,26 @@ class DomainILMNIST:
         # Create datasets (no label remapping)
         train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten=self.flatten)
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten=self.flatten)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
         
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
+        
         return train_loader, test_loader
     
     def get_all_tasks_dataloaders(self):
@@ -160,7 +184,7 @@ class DomainILMNIST:
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
         ]
 
-# Domain Incremental Learning class
+# Class Incremental Learning class
 class ClassILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
@@ -202,12 +226,25 @@ class ClassILMNIST:
         # No label remapping (keep original labels)
         train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, all_classes, self.transform, setting = "class", flatten = self.flatten)
         test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting = "class", flatten = self.flatten)
-
-        # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
         
         return train_loader, test_loader
         
@@ -216,7 +253,6 @@ class ClassILMNIST:
         return [
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
         ]
-        
 
 
 class BaseCIFAR10Dataset(Dataset):
@@ -308,10 +344,25 @@ class TaskILCIFAR10:
         test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, one_hot_classes, self.transform, self.flatten)
 
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
         
         return train_loader, test_loader
     
@@ -368,10 +419,25 @@ class ClassILCIFAR10:
         test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, all_classes, self.transform, setting="class", flatten = self.flatten)
 
         # Create dataloaders
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=False, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers,
+            generator=torch.Generator(device=self.device),
+            pin_memory=True,
+            drop_last=True
+        )
         
         return train_loader, test_loader
         
@@ -425,10 +491,25 @@ class DomainILCIFAR10:
         train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten = self.flatten)
         test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten = self.flatten)
         
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        # Create dataloaders
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,
+            num_workers=self.config.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            pin_memory=True,
+            drop_last=True
+        )
+        
         return train_loader, test_loader
     
     def get_all_tasks_dataloaders(self):

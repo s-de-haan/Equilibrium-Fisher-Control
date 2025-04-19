@@ -1,19 +1,19 @@
 import argparse
 import wandb
 from omegaconf import OmegaConf
+import os
+from datetime import datetime
+import multiprocessing
 
-from networks.BP_network import BP_network
-from networks.DFC_network import DFC_network
-from networks.EWC_network import EWC_network
-from networks.EFC_network import EFC_network
-from networks.EFC_network import EFC_network_v2, EFC_network_v3 
-from networks.BP_network_taskIL import TaskIncrementalBP_network
-from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
-from src.datasets import SplitMNIST
+# Import our new network implementations
+from networks.backprop import BP_Network, TaskIL_BP_Network
+from networks.ewc import EWC_Network, TaskIL_EWC_Network
+from networks.dfc import DFC_Network, TaskIL_DFC_Network
+from networks.efc import EFC_Network, TaskIL_EFC_Network
+from src.trainers import WandBTrainerCL, WandBTrainerCLTaskIL
+
+# Import the dataloaders from existing code
 from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
-
-from src.trainers import WandBTrainerCL
-from src.trainers_taskIL import WandBTrainerCLTaskIL
 from src.utils import str2bool
 
 def parse_args():
@@ -50,7 +50,7 @@ def parse_args():
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")
     
     # Training method: ewc, efc, or bp.
-    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "efc_bp", "efc_v2", "efc_v3"],
+    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc"],
                         help="Training method to use")
     
     # Additional parameters as needed:
@@ -75,24 +75,80 @@ def parse_args():
 
 def get_model(model_name: str, setting: str, config):
     """Get model based on name and setting."""
-    if setting == "domainIL" or setting == "classIL":
-        models = {
-            "bp": BP_network,
-            "dfc": DFC_network,
-            "ewc": EWC_network,
-            "efc": EFC_network,
-            "efc_v2": EFC_network_v2,
-            "efc_v3": EFC_network_v3
-        }
-    elif setting == "taskIL":
-        models = {
-            "bp": TaskIncrementalBP_network,
-            "efc_bp": TaskIncremental_EFC_BP_network,
-            "efc": TaskIncremental_EFC_network
-        }
+    # Extract dimensions from config
+    input_dim = config.layers[0]  # First dimension (e.g., 784 for MNIST)
+    hidden_dims = config.layers[1:-1]  # Middle dimensions (e.g., [400, 400])
+    
+    # Determine the output dimension based on setting
+    if setting == "taskIL":
+        output_dim = config.layers[-1]  # Last dimension (e.g., 2 for each task)
+        task_output_dims = [output_dim] * 5  # Assuming 5 tasks
     else:
-        raise ValueError("Invalid setting")
-    return models[model_name](config)
+        # For domainIL and classIL, we need 10 outputs for MNIST / CIFAR10 (all classes)
+        output_dim = 10
+
+    if setting == "taskIL":
+        # Task-incremental learning models
+        if model_name == "bp":
+            return TaskIL_BP_Network(
+                input_dim,       # input_dim
+                hidden_dims,     # hidden_dims
+                task_output_dims # task_output_dims
+            )
+        elif model_name == "dfc":
+            return TaskIL_DFC_Network(
+                input_dim,       # input_dim
+                hidden_dims,     # hidden_dims
+                task_output_dims,# task_output_dims
+                config
+            )
+        elif model_name == "ewc":
+            return TaskIL_EWC_Network(
+                input_dim,       # input_dim
+                hidden_dims,     # hidden_dims
+                task_output_dims,# task_output_dims
+                config.importance_ewc
+            )
+        elif model_name == "efc":
+            return TaskIL_EFC_Network(
+                input_dim,       # input_dim
+                hidden_dims,     # hidden_dims
+                task_output_dims,# task_output_dims
+                config
+            )
+        else:
+            raise ValueError(f"Unknown model name: {model_name}")
+    else:
+        # Standard models for domain-incremental or class-incremental learning
+        if model_name == "bp":
+            return BP_Network(
+                input_dim,      # input_dim
+                hidden_dims,    # hidden_dims
+                output_dim      # output_dim (e.g., 10 for full MNIST)
+            )
+        elif model_name == "dfc":
+            return DFC_Network(
+                input_dim,      # input_dim
+                hidden_dims,    # hidden_dims
+                output_dim,     # output_dim (e.g., 10 for full MNIST)
+                config
+            )
+        elif model_name == "ewc":
+            return EWC_Network(
+                input_dim,      # input_dim
+                hidden_dims,    # hidden_dims
+                output_dim,     # output_dim (e.g., 10 for full MNIST)
+                config.importance_ewc
+            )
+        elif model_name == "efc":
+            return EFC_Network(
+                input_dim,      # input_dim
+                hidden_dims,    # hidden_dims
+                output_dim,     # output_dim (e.g., 10 for full MNIST)
+                config
+            )
+        else:
+            raise ValueError(f"Unknown model name: {model_name}")
 
 def get_dataset(setting: str, dataset: str, config):
     """Get dataset based on setting."""
@@ -110,7 +166,7 @@ def get_dataset(setting: str, dataset: str, config):
         return ClassILCIFAR10(config).get_all_tasks_dataloaders()
     else:
         raise ValueError("Invalid setting or dataset")
-    
+
 
 def main():
     args = parse_args()
@@ -126,21 +182,40 @@ def main():
     
     print("Final configuration:")
     print(OmegaConf.to_yaml(config))
+
+    if config.num_workers > 0:
+        try:
+            multiprocessing.set_start_method('spawn')
+        except RuntimeError:
+            pass
     
-    model = get_model(config.method, config.setting, config)
+    
+    # Get model and datasets
+    model = get_model(config.method, config.dataset, config)
     tasks_dataloaders = get_dataset(config.setting, config.dataset, config)
+    
+    # Set up WandB project
     project_name = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
     
-    wandb.init(project=project_name, 
-        name=config.run_name,
-        entity="equilibrium-fisher-control",
-        config=OmegaConf.to_container(config))
-    
+    # Initialize WandB if it's not already initialized
+    if wandb.run is None:
+        wandb.init(project=project_name, 
+            name=config.run_name,
+            entity="equilibrium-fisher-control",
+            config=OmegaConf.to_container(config))
+        
+    # Train the model
     if config.setting == "taskIL":
         trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
     else:
         trainer = WandBTrainerCL(model, tasks_dataloaders, config)
     trainer.train()
+
+    # Save the model if requested
+    if config.save:
+        os.makedirs("models", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        trainer.save_model(f"models/{config.method}_{timestamp}_model.pt")
 
 if __name__ == "__main__":
     main()
