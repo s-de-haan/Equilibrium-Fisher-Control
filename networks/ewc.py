@@ -1,173 +1,82 @@
 import torch
 from typing import List
 
-from networks.backprop import BP_Network, TaskIL_BP_Network
+from networks.backprop import BaseNetwork, BaseTaskIncrementalNetwork
 
-class EWC_Network(BP_Network):
+
+class EWCNetwork(BaseNetwork):
     """
     Elastic Weight Consolidation (EWC) Network.
     Implements EWC penalty for continual learning.
     """
+    
     def __init__(self, input_dim: int, hidden_dims: List[int], output_dim: int, importance: float = 1.0):
-        """
-        Initialize an EWC network.
-        
-        Args:
-            input_dim: Input dimension
-            hidden_dims: List of hidden layer dimensions
-            output_dim: Output dimension
-            importance: Importance coefficient for EWC penalty
-        """
         super().__init__(input_dim, hidden_dims, output_dim)
         self.importance = importance
     
-    def forward_train(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """
-        Training forward pass - for EWC, this is the same as the standard forward pass.
-        The EWC penalty is added during loss computation.
+    def compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute loss with EWC penalty."""
+        # Base task loss
+        if target.dim() == 2 and target.shape[1] > 1:
+            target = target.argmax(dim=1)
+        task_loss = F.cross_entropy(output, target)
         
-        Args:
-            x: Input tensor
-            y: Target tensor
-            
-        Returns:
-            torch.Tensor: Output predictions
-        """
-        return self.forward(x)
+        # Add EWC penalty if not first task
+        if not self._first_task:
+            ewc_loss = self._compute_ewc_penalty()
+            task_loss += ewc_loss
+        
+        return task_loss
     
-    def ewc_loss(self) -> torch.Tensor:
-        """
-        Compute the EWC penalty term.
-        
-        Returns:
-            torch.Tensor: EWC penalty
-        """
-        if self._first_task:
-            return torch.tensor(0.0, device=next(self.parameters()).device)
-            
+    def _compute_ewc_penalty(self) -> torch.Tensor:
+        """Compute the EWC penalty term."""
         loss = 0.0
         for n, p in self.named_parameters():
             if n in self._means and n in self._fisher:
-                loss += (self._fisher[n] * (p - self._means[n])**2).sum()
-                
+                loss += (self._fisher[n] * (p - self._means[n]) ** 2).sum()
         return self.importance * loss
     
-    def compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Compute loss with EWC penalty.
-        
-        Args:
-            output: Model output
-            target: Target values
-            
-        Returns:
-            torch.Tensor: Loss with EWC penalty
-        """
-        task_loss = super().compute_loss(output, target)
-        
-        if not self._first_task:
-            task_loss += self.ewc_loss()
-            
-        return task_loss
+
+class TaskILEWCNetwork(BaseTaskIncrementalNetwork):
+    """Task-incremental EWC network."""
     
-    def backward(self):
-        pass
-
-
-class TaskIL_EWC_Network(TaskIL_BP_Network):
-    """
-    Task-incremental learning version of EWC network.
-    Maintains separate output heads for each task and applies EWC to shared parameters.
-    """
-    def __init__(self, input_dim: int, hidden_dims: List[int], task_output_dims: List[int], importance: float = 1.0):
-        """
-        Initialize a task-incremental EWC network.
-        
-        Args:
-            input_dim: Input dimension
-            hidden_dims: List of hidden layer dimensions
-            task_output_dims: List of output dimensions for each task
-            importance: Importance coefficient for EWC penalty
-        """
+    def __init__(self, input_dim: int, hidden_dims: List[int], task_output_dims: List[int], 
+                 importance: float = 1.0):
         super().__init__(input_dim, hidden_dims, task_output_dims)
         self.importance = importance
-        self.task_fisher = {}  # Fisher matrix per task
-        self.task_means = {}   # Parameter means per task
+    
+    def compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """Compute loss with task-incremental EWC penalty."""
+        # Base task loss
+        if target.dim() == 2 and target.shape[1] > 1:
+            target = target.argmax(dim=1)
+        task_loss = F.cross_entropy(output, target)
         
-    def ewc_loss(self) -> torch.Tensor:
-        """
-        Compute the EWC penalty term for task-incremental learning.
-        Applies EWC only to shared parameters.
+        # Add EWC penalty for previous tasks
+        if not self._first_task:
+            ewc_loss = self._compute_task_ewc_penalty()
+            task_loss += ewc_loss
         
-        Returns:
-            torch.Tensor: EWC penalty
-        """
-        if self._first_task:
-            return torch.tensor(0.0, device=next(self.parameters()).device)
-            
+        return task_loss
+    
+    def _compute_task_ewc_penalty(self) -> torch.Tensor:
+        """Compute EWC penalty for all previous tasks."""
         loss = 0.0
         
-        # Apply EWC penalty for each previously seen task
+        # Apply penalty for each previous task
         for task_id in range(self.current_task):
             if task_id not in self.task_fisher:
                 continue
-                
+            
             task_loss = 0.0
             for n, p in self.named_parameters():
-                # Only apply to shared parameters or parameters of previous tasks
-                if n not in self.task_fisher[task_id] or n not in self.task_means[task_id]:
-                    continue
-                    
-                # Skip current task's output head parameters
+                # Skip current task's output head
                 if f"output_heads.{self.current_task}" in n:
                     continue
-                    
-                task_loss += (self.task_fisher[task_id][n] * (p - self.task_means[task_id][n])**2).sum()
                 
+                if n in self.task_fisher[task_id] and n in self.task_means[task_id]:
+                    task_loss += (self.task_fisher[task_id][n] * (p - self.task_means[task_id][n]) ** 2).sum()
+            
             loss += task_loss
-                
+        
         return self.importance * loss
-    
-    def compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Compute loss with EWC penalty.
-        
-        Args:
-            output: Model output
-            target: Target values
-            
-        Returns:
-            torch.Tensor: Loss with EWC penalty
-        """
-        task_loss = super().compute_loss(output, target)
-        
-        if not self._first_task:
-            task_loss += self.ewc_loss()
-            
-        return task_loss
-    
-    def complete_task(self, dataloader: torch.utils.data.DataLoader, device: torch.device) -> None:
-        """
-        Complete a task and compute task-specific Fisher matrix.
-        
-        Args:
-            dataloader: DataLoader for the task
-            device: Device to use for computation
-        """
-        # Compute the Fisher matrix for the current task
-        current_fisher = self.calculate_fisher(dataloader, device)
-        current_means = {n: p.data.clone() for n, p in self.named_parameters()}
-        
-        # Store in task-specific dictionaries
-        self.task_fisher[self.current_task] = current_fisher
-        self.task_means[self.current_task] = current_means
-        
-        # Update first_task flag
-        if self._first_task:
-            self._first_task = False
-            
-        # Increment task ID if using automatic task progression
-        # self.current_task += 1  # Uncomment if automatic progression is desired
-
-    def backward(self):
-        pass
