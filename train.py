@@ -46,6 +46,7 @@ def parse_args():
                         choices=["MNIST", "CIFAR10"])
     
     # Method-specific parameters
+    parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"])
     parser.add_argument("--importance_ewc", type=float, default=1.0, 
                         help="EWC importance")
     parser.add_argument("--beta_efc", type=float, default=5.0, 
@@ -76,6 +77,7 @@ def get_model(config):
     """Create model based on method and setting."""
     input_dim = config.layers[0]
     hidden_dims = config.layers[1:-1]
+    use_dynamic_inversion = True if config.mode == "di" else False
     
     if config.setting == "taskIL":
         # Task-incremental learning with 5 tasks, 2 classes each
@@ -121,7 +123,8 @@ def get_model(config):
             return EFCNetwork(input_dim, hidden_dims, output_dim,
                              beta=config.beta_efc, dt=config.dt_di,
                              k_p=config.k_p, alpha=config.alpha_di,
-                             max_iter=config.tmax_di, eps=config.eps)
+                             tmax=config.tmax_di, eps=config.eps,
+                             use_dynamic_inversion=use_dynamic_inversion)
     
     raise ValueError(f"Unknown method: {config.method}")
 
