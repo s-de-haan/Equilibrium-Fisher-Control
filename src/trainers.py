@@ -181,13 +181,9 @@ class TrainerInterface:
             # Compute loss
             loss = self.model.compute_loss(y_hat, y)
             
-            # Backward pass - THIS IS THE KEY ISSUE
+            # Backward pass
             self.optimizer.zero_grad()
             loss.backward()  # Use standard PyTorch backward
-            
-            # Only call model.backward if it exists and after loss.backward()
-            if hasattr(self.model, 'backward') and callable(getattr(self.model, 'backward')):
-                self.model.backward()
                 
             # Update weights
             self.optimizer.step()
@@ -633,7 +629,7 @@ class TrainerInterfaceTaskIL:
             y = y.to(self.device)
 
             y_hat = self.model(X, task_id)
-            loss = self.model.calculate_loss(y_hat, y)
+            loss = self.model.compute_loss(y_hat, y)
 
             self.optimizer.zero_grad()
             self.model.backward()

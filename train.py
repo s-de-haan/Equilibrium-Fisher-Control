@@ -1,27 +1,114 @@
+# Updated training script with corrected EFC implementation
+
 import argparse
 import wandb
 from omegaconf import OmegaConf
 import os
 from datetime import datetime
 import multiprocessing
+import torch
 
-# Import our new network implementations
-from networks.backprop import BP_Network, TaskIL_BP_Network
-from networks.ewc import EWC_Network, TaskIL_EWC_Network
-from networks.dfc import DFC_Network, TaskIL_DFC_Network
-from networks.efc import EFC_Network, TaskIL_EFC_Network
-from src.trainers import WandBTrainerCL, WandBTrainerCLTaskIL
+# Import the corrected EFC implementation
+from networks.efc import EFC_Network_Wrapper, TaskIL_EFC_Network_Wrapper
+
+# Import existing trainers - we'll need to modify the _train_step method
+from src.trainers import WandBTrainerCL
 
 # Import the dataloaders from existing code
 from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
 from src.utils import str2bool
+
+
+class EFCTrainer(WandBTrainerCL):
+    """Specialized trainer for EFC networks"""
+    
+    def _train_step(self, epoch: int) -> float:
+        """Modified training step for EFC networks"""
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        self.model.train()
+        epoch_loss = 0
+        
+        for X, y in self.train_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            # Use EFC forward training method
+            if hasattr(self.model, 'forward_train'):
+                y_hat = self.model.forward_train(X, y)
+                loss = self.model.calculate_loss(y_hat, y)
+            else:
+                y_hat = self.model(X)
+                loss = self.model.calculate_loss(y_hat, y)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in train loss")
+
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.train_loader)
+        return epoch_loss
+
+
+class EFCTaskILTrainer(EFCTrainer):
+    """Specialized trainer for Task-Incremental EFC networks"""
+    
+    def _train_step(self, epoch: int, task_id: int) -> float:
+        """Modified training step for Task-IL EFC networks"""
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        # Set current task
+        self.model.set_task(task_id)
+        
+        # Freeze previous task output heads
+        self.model.freeze_previous_tasks()
+        self.model.train()
+
+        epoch_loss = 0
+        for X, y in self.train_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            # Use EFC forward training method with task ID
+            y_hat = self.model.forward_train(X, y)
+            loss = self.model.calculate_loss(y_hat, y)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            epoch_loss += loss.item()
+
+            if epoch_loss != epoch_loss:
+                raise ArithmeticError("NaN detected in train loss")
+
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        epoch_loss /= len(self.train_loader)
+        self.model.complete_task_and_freeze_output_head(task_id)
+        return epoch_loss
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
     # Network architecture & training hyperparameters:
     parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
                         help="Network layer sizes (e.g., 784 400 400 2)")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1.5e-6, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
@@ -44,7 +131,7 @@ def parse_args():
     parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
     parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
-    parser.add_argument("--tau", type=float, default=0.008, help="tau parameter")
+    parser.add_argument("--taus", type=float, nargs='+', default=[0.02, 0.016, 0.01], help="tau parameter")
     
     # EWC-specific hyperparameters:
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")
@@ -65,6 +152,9 @@ def parse_args():
     parser.add_argument("--run_name", type=str, default="default", help="Run name for wandb")
     parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="Whether to normalize the Fisher matrix")
     parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to compute stability gap")
+
+    # Debug
+    parser.add_argument("--debug", type=str2bool, default="false", help="Whether to debug experiment")
     
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
@@ -73,82 +163,28 @@ def parse_args():
     return args
 
 
-def get_model(model_name: str, setting: str, config):
-    """Get model based on name and setting."""
+def get_model(config):
+    """Get EFC model based on setting"""
     # Extract dimensions from config
-    input_dim = config.layers[0]  # First dimension (e.g., 784 for MNIST)
-    hidden_dims = config.layers[1:-1]  # Middle dimensions (e.g., [400, 400])
+    input_dim = config.layers[0]
+    hidden_dims = config.layers[1:-1]
     
-    # Determine the output dimension based on setting
-    if setting == "taskIL":
-        output_dim = config.layers[-1]  # Last dimension (e.g., 2 for each task)
-        task_output_dims = [output_dim] * 5  # Assuming 5 tasks
+    if config.setting == "taskIL":
+        return TaskIL_EFC_Network_Wrapper(
+            config,
+            num_tasks=5,
+            task_output_size=2
+        )
     else:
-        # For domainIL and classIL, we need 10 outputs for MNIST / CIFAR10 (all classes)
+        # For domainIL and classIL, use 10 outputs for MNIST
         output_dim = 10
+        return EFC_Network_Wrapper(
+            input_dim,
+            hidden_dims,
+            output_dim,
+            config
+        )
 
-    if setting == "taskIL":
-        # Task-incremental learning models
-        if model_name == "bp":
-            return TaskIL_BP_Network(
-                input_dim,       # input_dim
-                hidden_dims,     # hidden_dims
-                task_output_dims # task_output_dims
-            )
-        elif model_name == "dfc":
-            return TaskIL_DFC_Network(
-                input_dim,       # input_dim
-                hidden_dims,     # hidden_dims
-                task_output_dims,# task_output_dims
-                config
-            )
-        elif model_name == "ewc":
-            return TaskIL_EWC_Network(
-                input_dim,       # input_dim
-                hidden_dims,     # hidden_dims
-                task_output_dims,# task_output_dims
-                config.importance_ewc
-            )
-        elif model_name == "efc":
-            return TaskIL_EFC_Network(
-                input_dim,       # input_dim
-                hidden_dims,     # hidden_dims
-                task_output_dims,# task_output_dims
-                config
-            )
-        else:
-            raise ValueError(f"Unknown model name: {model_name}")
-    else:
-        # Standard models for domain-incremental or class-incremental learning
-        if model_name == "bp":
-            return BP_Network(
-                input_dim,      # input_dim
-                hidden_dims,    # hidden_dims
-                output_dim      # output_dim (e.g., 10 for full MNIST)
-            )
-        elif model_name == "dfc":
-            return DFC_Network(
-                input_dim,      # input_dim
-                hidden_dims,    # hidden_dims
-                output_dim,     # output_dim (e.g., 10 for full MNIST)
-                config
-            )
-        elif model_name == "ewc":
-            return EWC_Network(
-                input_dim,      # input_dim
-                hidden_dims,    # hidden_dims
-                output_dim,     # output_dim (e.g., 10 for full MNIST)
-                config.importance_ewc
-            )
-        elif model_name == "efc":
-            return EFC_Network(
-                input_dim,      # input_dim
-                hidden_dims,    # hidden_dims
-                output_dim,     # output_dim (e.g., 10 for full MNIST)
-                config
-            )
-        else:
-            raise ValueError(f"Unknown model name: {model_name}")
 
 def get_dataset(setting: str, dataset: str, config):
     """Get dataset based on setting."""
@@ -179,9 +215,6 @@ def main():
     
     # Convert the Namespace to an OmegaConf config object.
     config = OmegaConf.create(vars(args))
-    
-    print("Final configuration:")
-    print(OmegaConf.to_yaml(config))
 
     if config.num_workers > 0:
         try:
@@ -189,33 +222,51 @@ def main():
         except RuntimeError:
             pass
     
-    
     # Get model and datasets
-    model = get_model(config.method, config.dataset, config)
+    model = get_model(config)
     tasks_dataloaders = get_dataset(config.setting, config.dataset, config)
     
-    # Set up WandB project
-    project_name = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
+    # Move model to device
+    model = model.to(config.device)
     
-    # Initialize WandB if it's not already initialized
-    if wandb.run is None:
-        wandb.init(project=project_name, 
-            name=config.run_name,
-            entity="equilibrium-fisher-control",
-            config=OmegaConf.to_container(config))
-        
-    # Train the model
+    # Set up WandB project
+    project_name = f"{config.setting}_{config.dataset}_efc_corrected"
+    
+    # Initialize WandB if not debugging
+    if not config.debug:
+        if wandb.run is None:
+            wandb.init(
+                project=project_name, 
+                name=config.run_name,
+                entity="equilibrium-fisher-control",
+                config=OmegaConf.to_container(config)
+            )
+    
+    # Choose appropriate trainer
     if config.setting == "taskIL":
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
+        trainer = EFCTaskILTrainer(model, tasks_dataloaders, config)
     else:
-        trainer = WandBTrainerCL(model, tasks_dataloaders, config)
-    trainer.train()
+        trainer = EFCTrainer(model, tasks_dataloaders, config)
+    
+    try:
+        trainer.train()
+        print("Training completed successfully!")
+        
+        # Save the model if requested
+        if config.save:
+            os.makedirs("models", exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            torch.save(model.efc_network.state_dict(), f"models/efc_corrected_{timestamp}.pt")
+            
+    except Exception as e:
+        print(f"Training failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        if not config.debug and wandb.run is not None:
+            wandb.finish(exit_code=1)
+        raise
 
-    # Save the model if requested
-    if config.save:
-        os.makedirs("models", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        trainer.save_model(f"models/{config.method}_{timestamp}_model.pt")
 
 if __name__ == "__main__":
     main()
