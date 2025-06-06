@@ -97,7 +97,8 @@ def get_model(config):
             return TaskILEFCNetwork(input_dim, hidden_dims, task_output_dims,
                                    beta=config.beta_efc, dt=config.dt_di,
                                    k_p=config.k_p, alpha=config.alpha_di,
-                                   max_iter=config.tmax_di, eps=config.eps)
+                                   tmax=config.tmax_di, eps=config.eps,
+                                   use_dynamic_inversion=use_dynamic_inversion)
     else:
         # Regular continual learning (domainIL, classIL)
         # Determine output dimension based on dataset and setting

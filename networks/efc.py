@@ -330,195 +330,272 @@ class EFCNetwork(BaseNetwork):
 
 
 class TaskILEFCNetwork(BaseTaskIncrementalNetwork):
-    """Task-incremental EFC network."""
-    
-    def __init__(self, input_dim: int, hidden_dims: List[int], task_output_dims: List[int],
-                 beta: float = 1.0, dt: float = 0.008, k_p: float = 2.0,
-                 alpha: float = 1e-4, max_iter: int = 500, eps: float = 1e-4,
-                 beta_softplus: float = 5.0):
+    """Equilibrium‑Fisher‑Control network for *task‑incremental* learning.
+
+    The architecture is a shared feature trunk trained with EFC
+    regularised by Fisher information of *previous tasks*, plus one
+    linear (or low‑capacity) head per task.  During training we can call ▸
+
+        logits, pseudo_loss = model.forward(x, y, task_id)
+
+    and add the returned *pseudo_loss* to the usual cross‑entropy (or
+    use the convenience `compute_loss`).
+    """
+
+    def __init__(self,
+                 input_dim: int,
+                 hidden_dims: List[int],
+                 task_output_dims: List[int],
+                 beta: float = 1.0,
+                 taus: Optional[List[float]] = None,
+                 dt: float = 8e-3,
+                 k_p: float = 2.0,
+                 alpha: float = 0.0,
+                 tmax: int = 500,
+                 eps: float = 1e-4,
+                 beta_softplus: float = 5.0,
+                 use_dynamic_inversion: bool = True):
         super().__init__(input_dim, hidden_dims, task_output_dims)
-        
-        # Use softplus activation
-        self.activation = nn.Softplus(beta=beta_softplus)
-        
-        # EFC parameters
+
+        # ---------- trunk (shared) ----------
+        dims = [input_dim] + hidden_dims
+        self.layers = nn.ModuleList([
+            nn.Linear(dims[i], dims[i + 1]) for i in range(len(dims) - 1)
+        ])
+
+        # ---------- heads (task‑specific) ----------
+        head_in = hidden_dims[-1]
+        self.output_heads = nn.ModuleList([
+            nn.Linear(head_in, out_d) for out_d in task_output_dims
+        ])
+
+        # ---------- nonlinearities ----------
+        self.act = nn.Softplus(beta=beta_softplus)
+
+        # ---------- EFC hyper‑parameters ----------
         self.beta = beta
+        self.taus = taus if taus is not None else [dt] * len(self.layers)
         self.dt = dt
         self.k_p = k_p
         self.alpha = alpha
-        self.max_iter = max_iter
+        self.tmax = tmax
         self.eps = eps
-    
-    def forward_train(self, x: torch.Tensor, y: torch.Tensor, task_id: Optional[int] = None) -> torch.Tensor:
-        """Task-specific EFC training forward pass."""
-        if task_id is None:
-            task_id = self.current_task
-        
-        # Convert targets to one-hot
-        if y.dim() == 1:
-            output_dim = self.output_heads[task_id].out_features
-            y_onehot = F.one_hot(y, output_dim).float()
-        else:
-            y_onehot = y
-        
-        # Perform task-specific dynamic inversion
-        output, pseudo_loss = self._task_dynamic_inversion(x, y_onehot, task_id)
-        self._pseudo_loss = pseudo_loss
-        
-        return output
-    
-    def _task_dynamic_inversion(self, x: torch.Tensor, targets: torch.Tensor, 
-                               task_id: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Task-specific dynamic inversion."""
-        batch_size = x.shape[0]
-        device = x.device
-        
-        # Initialize with feedforward pass
-        with torch.no_grad():
-            acts_ff = self._task_feedforward_pass(x, task_id)
-        
-        # Initialize states for shared layers
-        states = []
-        for i in range(len(self.layers)):
-            state = acts_ff[i + 1].detach().clone()
-            state.requires_grad_(True)
-            states.append(state)
-        
-        # Control variables
+        self.use_dynamic_inversion = use_dynamic_inversion
+
+        # ---------- Fisher bookkeeping ----------
+        self.fisher = {}
+        self.theta_star = {}
+        self.first_task = True
+
+        # debug storage
+        self._last_modulation = None
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+    def _compute_gamma(self, layer_idx: int, B: int, device: torch.device) -> torch.Tensor:
+        """γ = −β H (θ − θ★)  for the *shared* layer `layer_idx`."""
+        if self.first_task:
+            return torch.zeros(B, self.layers[layer_idx].out_features, device=device)
+
+        gamma = torch.zeros(B, self.layers[layer_idx].out_features, device=device)
+        layer = self.layers[layer_idx]
+
+        # weight contribution
+        w_key = f"layers.{layer_idx}.weight"
+        if w_key in self.fisher:
+            diff = layer.weight - self.theta_star[w_key]
+            gamma += -self.beta * (self.fisher[w_key] * diff).sum(dim=1).unsqueeze(0)
+
+        # bias contribution
+        b_key = f"layers.{layer_idx}.bias"
+        if b_key in self.fisher:
+            diff = layer.bias - self.theta_star[b_key]
+            gamma += -self.beta * (self.fisher[b_key] * diff).unsqueeze(0)
+
+        return gamma
+
+    # ------------------------------------------------------------------
+    # feed‑forward utilities
+    # ------------------------------------------------------------------
+    def _task_feedforward(self, x: torch.Tensor, task_id: int) -> List[torch.Tensor]:
+        """Return activations `[x, r¹, …, rᴸ, y]` for the given task head."""
+        acts = [x]
+        for layer in self.layers:
+            x = self.act(layer(x))
+            acts.append(x)
+        # final task‑specific linear
+        y = self.output_heads[task_id](x)
+        acts.append(y)
+        return acts
+
+    # ------------------------------------------------------------------
+    # non‑dynamic inversion (analytic, one‑shot)
+    # ------------------------------------------------------------------
+    def _task_non_dynamic_inversion(self, x: torch.Tensor, targets: torch.Tensor, task_id: int) -> Tuple[List[torch.Tensor], torch.Tensor]:
+        B, device = x.shape[0], x.device
+        acts_ff = self._task_feedforward(x, task_id)
+        error = targets - acts_ff[-1]                      # teaching signal at output
+
+        # Jacobian‑vector products w.r.t. hidden activations
+        J_eff = [None]
+        for l in range(1, len(self.layers) + 1):  # hidden layers only
+            jac = torch.autograd.grad(
+                outputs=acts_ff[-1],
+                inputs=acts_ff[l],
+                grad_outputs=error,
+                retain_graph=True)[0]
+            J_eff.append(jac)
+
+        eq_acts = [acts_ff[0]]  # keep input
+        pseudo_loss = torch.tensor(0., device=device)
+
+        # hidden layers
+        for l in range(1, len(self.layers) + 1):
+            psi = J_eff[l] / (acts_ff[l] + 1e-8)
+            gamma = self._compute_gamma(l - 1, B, device)
+            modulation = torch.exp(psi + gamma)
+            r_eq = modulation * acts_ff[l]
+            eq_acts.append(r_eq)
+
+            # teaching signal for weight l‑1
+            ts = (r_eq - acts_ff[l]).detach()
+            v_lm1 = self.layers[l - 1](acts_ff[l - 1])  # pre‑activation
+            pseudo_loss += (ts * v_lm1).sum()
+
+        # output layer (task head)
+        y_eq = self.output_heads[task_id](eq_acts[-1])
+        eq_acts.append(y_eq)
+        ts_out = (y_eq - acts_ff[-1]).detach()
+        v_out = self.output_heads[task_id](acts_ff[-2])
+        pseudo_loss += (ts_out * v_out).sum()
+
+        return eq_acts, pseudo_loss
+
+    # ------------------------------------------------------------------
+    # dynamic inversion (iterative PI control)
+    # ------------------------------------------------------------------
+    def _task_dynamic_inversion(self, x: torch.Tensor, targets: torch.Tensor, task_id: int) -> Tuple[List[torch.Tensor], torch.Tensor]:
+        B, device = x.shape[0], x.device
+        acts_ff = self._task_feedforward(x, task_id)
+        r_states = [a.detach().clone() for a in acts_ff]  # include output
+
         u = torch.zeros_like(targets)
         u_int = torch.zeros_like(targets)
-        
-        # Dynamic inversion loop
-        for iteration in range(self.max_iter):
-            # Build computational graph
-            current_acts = [x]
-            
-            # Shared layers
-            for i, state in enumerate(states):
-                activated = self.activation(state)
-                current_acts.append(activated)
-            
-            # Task-specific output
-            output = self.output_heads[task_id](current_acts[-1])
-            
+        self._last_modulation = []
+
+        for _ in range(self.tmax):
             # PI controller
-            error = output - targets
-            u_int_next = u_int + self.dt * (error.detach() - self.alpha * u)
-            u_next = u_int_next + self.k_p * error.detach()
-            
-            # Check convergence
+            error = r_states[-1] - targets
+            u_int = u_int + self.dt * (error - self.alpha * u)
+            u_next = u_int + self.k_p * error
             if torch.norm(u_next - u) < self.eps:
                 break
-            
-            # Compute control signals
-            psis = self._compute_task_psis_autograd(output, current_acts[1:], u_next)
-            
-            # Update states
-            new_states = []
-            for i in range(len(states)):
-                v_ff = self.layers[i](current_acts[i])
-                gamma = self._compute_gamma(i, batch_size, device)
-                
-                psi_gamma = psis[i] + gamma
-                e_mod = torch.exp(torch.clamp(psi_gamma, -3, 3))
-                
-                new_state = states[i] + self.dt * (v_ff.detach() * e_mod - states[i])
-                new_state = new_state.detach()
-                new_state.requires_grad_(True)
-                new_states.append(new_state)
-            
-            states = new_states
-            u_int, u = u_int_next.detach(), u_next.detach()
-        
-        # Final forward pass
-        final_acts = [x]
-        for state in states:
-            final_acts.append(self.activation(state))
-        final_output = self.output_heads[task_id](final_acts[-1])
-        
-        # Compute pseudo-loss
-        pseudo_loss = self._compute_task_pseudo_loss(x, final_output, targets, task_id)
-        
-        return final_output, pseudo_loss
-    
-    def _task_feedforward_pass(self, x: torch.Tensor, task_id: int) -> List[torch.Tensor]:
-        """Task-specific feedforward pass."""
-        activations = [x]
-        for layer in self.layers:
-            x = self.activation(layer(x))
-            activations.append(x)
-        x = self.output_heads[task_id](x)
-        activations.append(x)
-        return activations
-    
-    def _compute_task_psis_autograd(self, output: torch.Tensor, hidden_acts: List[torch.Tensor],
-                                   u: torch.Tensor) -> List[torch.Tensor]:
-        """Compute task-specific control signals."""
-        psis = []
-        
-        for act in hidden_acts:
-            try:
-                psi = torch.autograd.grad(
-                    outputs=output,
-                    inputs=act,
-                    grad_outputs=u,
-                    retain_graph=True,
-                    allow_unused=True
-                )[0]
-                
-                if psi is None:
-                    psi = torch.zeros_like(act)
-                
-                psis.append(psi.detach())
-                
-            except RuntimeError:
-                psis.append(torch.zeros_like(act))
-        
-        return psis
-    
-    def _compute_gamma(self, layer_idx: int, batch_size: int, device: torch.device) -> torch.Tensor:
-        """Compute Fisher preservation term for shared layers."""
-        if self._first_task:
-            return torch.zeros(batch_size, self.layers[layer_idx].out_features, device=device)
-        
-        gamma = torch.zeros(batch_size, self.layers[layer_idx].out_features, device=device)
-        layer = self.layers[layer_idx]
-        
-        # Use task-specific Fisher if available, otherwise use accumulated Fisher
-        if self.current_task in self.task_fisher:
-            fisher = self.task_fisher[self.current_task]
-            means = self.task_means[self.current_task]
+
+            # J^T u for each hidden layer
+            psis = [None]
+            for l in range(1, len(self.layers) + 1):
+                psi = torch.autograd.grad(r_states[-1], r_states[l], u_next,
+                                           retain_graph=True, create_graph=True)[0]
+                psis.append(psi)
+
+            # update hidden states
+            new_states = [r_states[0]]  # X stays
+            for l in range(1, len(self.layers) + 1):
+                v_ff = self.layers[l - 1](new_states[l - 1])
+                r_ff = self.act(v_ff)
+                psi_norm = psis[l] / (r_ff + 1e-8)
+                gamma = self._compute_gamma(l - 1, B, device)
+                mod = torch.exp(psi_norm + gamma)
+                self._last_modulation.append(mod.detach())
+                tau = self.taus[l - 1]
+                r_new = r_states[l] + tau * (mod * r_ff - r_states[l])
+                new_states.append(r_new)
+
+            # output layer (head)
+            y_new = self.output_heads[task_id](new_states[-1])
+            new_states.append(y_new)
+
+            r_states = [s.detach() for s in new_states]
+            u = u_next.detach()
+
+        # compute pseudo‑loss
+        pseudo_loss = torch.tensor(0., device=device)
+        for l in range(1, len(self.layers) + 1):
+            ts = (r_states[l] - acts_ff[l]).detach()
+            v_lm1 = self.layers[l - 1](acts_ff[l - 1])
+            pseudo_loss += (ts * v_lm1).sum()
+        # output
+        ts_out = (r_states[-1] - acts_ff[-1]).detach()
+        v_out = self.output_heads[task_id](acts_ff[-2])
+        pseudo_loss += (ts_out * v_out).sum()
+
+        return r_states, pseudo_loss
+
+    # ------------------------------------------------------------------
+    # public forward wrappers
+    # ------------------------------------------------------------------
+    def forward(self, x: torch.Tensor, targets: Optional[torch.Tensor] = None,
+                *, task_id: Optional[int] = None, use_efc: bool = True):
+        if task_id is None:
+            task_id = getattr(self, "current_task", 0)
+
+        if self.training and targets is not None and use_efc:
+            # convert to one‑hot if necessary
+            if targets.dim() == 1:
+                targets = F.one_hot(targets, self.output_heads[task_id].out_features).float()
+
+            if self.use_dynamic_inversion:
+                acts_eq, pseudo_loss = self._task_dynamic_inversion(x, targets, task_id)
+            else:
+                acts_eq, pseudo_loss = self._task_non_dynamic_inversion(x, targets, task_id)
+            self._pseudo_loss = pseudo_loss
+            return acts_eq[-1]
         else:
-            fisher = self._fisher
-            means = self._means
-        
-        # Weight contribution
-        w_key = f"layers.{layer_idx}.weight"
-        if w_key in fisher:
-            w_diff = layer.weight - means[w_key]
-            w_fisher = fisher[w_key]
-            gamma += -self.beta * (w_fisher * w_diff).sum(dim=1).unsqueeze(0)
-        
-        # Bias contribution
-        b_key = f"layers.{layer_idx}.bias"
-        if b_key in fisher:
-            b_diff = layer.bias - means[b_key]
-            b_fisher = fisher[b_key]
-            gamma += -self.beta * (b_fisher * b_diff).unsqueeze(0)
-        
-        return gamma
-    
-    def _compute_task_pseudo_loss(self, x: torch.Tensor, equilibrium_output: torch.Tensor,
-                                 targets: torch.Tensor, task_id: int) -> torch.Tensor:
-        """Compute task-specific pseudo-loss."""
-        ff_acts = self._task_feedforward_pass(x, task_id)
-        teaching_signal = equilibrium_output - ff_acts[-1]
-        pseudo_loss = -(teaching_signal.detach() * ff_acts[-1]).sum()
-        return pseudo_loss
-    
+            # inference mode (no EFC)
+            return self._task_feedforward(x, task_id)[-1]
+
+    # ------------------------------------------------------------------
+    # loss helpers ------------------------------------------------------
+    # ------------------------------------------------------------------
     def compute_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """Task-incremental loss computation."""
-        if hasattr(self, '_pseudo_loss'):
+        if hasattr(self, "_pseudo_loss"):
             return self._pseudo_loss
+        return super().compute_loss(output, target)
+
+    # ------------------------------------------------------------------
+    # Fisher machinery (shared trunk only) ------------------------------
+    # ------------------------------------------------------------------
+    def _compute_fisher(self, dataloader):
+        fisher = {n: torch.zeros_like(p) for n, p in self.named_parameters() if p.requires_grad}
+        self.eval()
+        n_samples = 0
+        for x, y in dataloader:
+            x = x.to(next(self.parameters()).device)
+            y = y.to(next(self.parameters()).device)
+            logits = self.forward(x, task_id=self.current_task, use_efc=False)
+            log_probs = F.log_softmax(logits, dim=1)
+            if y.dim() == 1:
+                y = F.one_hot(y, logits.size(1)).float()
+            ll = (log_probs * y).sum()
+            self.zero_grad()
+            ll.backward()
+            with torch.no_grad():
+                for n, p in self.named_parameters():
+                    if p.grad is not None:
+                        fisher[n] += p.grad.pow(2)
+            n_samples += x.size(0)
+        for n in fisher:
+            fisher[n] /= n_samples
+        return fisher
+
+    def complete_task(self, dataloader):
+        self.theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
+        if self.first_task:
+            self.fisher = self._compute_fisher(dataloader)
+            self.first_task = False
         else:
-            return super().compute_loss(output, target)
+            new_fisher = self._compute_fisher(dataloader)
+            for n in self.fisher:
+                if n in new_fisher:
+                    self.fisher[n] += new_fisher[n]
