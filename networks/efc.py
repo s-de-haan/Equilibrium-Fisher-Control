@@ -470,7 +470,7 @@ class TaskILEFCNetwork(BaseTaskIncrementalNetwork):
             # Teaching signal for weight updates
             teaching_signal = (r_eq - acts_ff[i]).detach()
             pre_activation = self.layers[i-1](acts_ff[i-1])
-            pseudo_loss += (teaching_signal * pre_activation).sum()
+            pseudo_loss +=  (teaching_signal * pre_activation).sum()
 
         # Output layer (task head)
         y_eq = self.output_heads[task_id](equilibrium_acts[-1])
