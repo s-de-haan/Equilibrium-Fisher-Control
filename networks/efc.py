@@ -129,7 +129,7 @@ class EFCNetwork(BaseNetwork):
             psi_star = J_eff[i] / (acts_ff[i] + 1e-8)  # Normalized by activation
             gamma = self._compute_gamma(i-1, batch_size, device)
             
-            # CRITICAL: Use exponential, not tanh!
+            # I'm using exponential and not tanh here, not sure if this is the right thing to do
             modulation = torch.exp(psi_star + gamma)
             
             # Equilibrium activation
@@ -141,7 +141,7 @@ class EFCNetwork(BaseNetwork):
             
             # Accumulate pseudo-loss
             v_i = self.layers[i-1](acts_ff[i-1])
-            pseudo_loss += (ts * v_i).sum()
+            pseudo_loss -= (ts * v_i).sum()
         
         # Output layer
         y_eq = self.layers[-1](equilibrium_acts[-1])
@@ -150,7 +150,7 @@ class EFCNetwork(BaseNetwork):
         # Final teaching signal
         ts_out = (y_eq - acts_ff[-1]).detach()
         v_out = self.layers[-1](acts_ff[-2])
-        pseudo_loss += (ts_out * v_out).sum()
+        pseudo_loss -= (ts_out * v_out).sum()
         
         return equilibrium_acts, pseudo_loss
     
@@ -244,9 +244,9 @@ class EFCNetwork(BaseNetwork):
                 mod = self._last_modulation[i-1]
                 # Weight update proportional to (e^(ψ+γ) - 1)
                 weight_factor = (mod - 1).mean()
-                pseudo_loss += weight_factor * (ts * v_i).sum()
+                pseudo_loss -= weight_factor * (ts * v_i).sum()
             else:
-                pseudo_loss += (ts * v_i).sum()
+                pseudo_loss -= (ts * v_i).sum()
         
         return r_states, pseudo_loss
     
@@ -470,7 +470,7 @@ class TaskILEFCNetwork(BaseTaskIncrementalNetwork):
             # Teaching signal for weight updates
             teaching_signal = (r_eq - acts_ff[i]).detach()
             pre_activation = self.layers[i-1](acts_ff[i-1])
-            pseudo_loss +=  (teaching_signal * pre_activation).sum()
+            pseudo_loss -=  (teaching_signal * pre_activation).sum()
 
         # Output layer (task head)
         y_eq = self.output_heads[task_id](equilibrium_acts[-1])
@@ -479,7 +479,7 @@ class TaskILEFCNetwork(BaseTaskIncrementalNetwork):
         # Teaching signal for output head
         ts_out = (y_eq - acts_ff[-1]).detach()
         pre_act_out = equilibrium_acts[-2]  # Features from last shared layer
-        pseudo_loss += (ts_out * pre_act_out).sum()
+        pseudo_loss -= (ts_out * pre_act_out).sum()
 
         return equilibrium_acts, pseudo_loss
 
@@ -583,14 +583,14 @@ class TaskILEFCNetwork(BaseTaskIncrementalNetwork):
             if self._last_modulation and len(self._last_modulation) > i:
                 mod = self._last_modulation[i]
                 weight_factor = (mod - 1).mean()
-                pseudo_loss += weight_factor * (ts * v_i).sum()
+                pseudo_loss -= weight_factor * (ts * v_i).sum()
             else:
-                pseudo_loss += (ts * v_i).sum()
+                pseudo_loss -= (ts * v_i).sum()
         
         # Output layer teaching signal
         ts_out = (r_states[-1] - acts_ff[-1]).detach()
         v_out = self.output_heads[task_id](acts_ff[-2])
-        pseudo_loss += (ts_out * v_out).sum()
+        pseudo_loss -= (ts_out * v_out).sum()
         
         return r_states, pseudo_loss
 
