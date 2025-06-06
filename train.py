@@ -22,7 +22,7 @@ def parse_args():
     # Network architecture
     parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400],
                         help="Network layer sizes")
-    parser.add_argument("--lr", type=float, default=1.5e-6, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-04, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers")
