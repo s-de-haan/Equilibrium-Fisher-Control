@@ -4,235 +4,7 @@ from networks.network_interface import *
 from networks.layers import *
 from networks.activation_function import *
 
-"""
-    Original implementation adapted from the DFC_Mult_network with gamma term
-"""
 class EFC_network(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
-        JacobianInterface.__init__(self, config)
-        FisherInterface.__init__(self)
-        
-        self.beta = config.beta_efc
-        self.clamp = config.clamp
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
-
-        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        u_current = torch.zeros((self.bzs, self.output_size))
-        u_int_current = torch.zeros((self.bzs, self.output_size))
-
-        for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.v_ff
-            v_current[i] = layer.v_ff
-            r_current[i] = layer.r
-            layer.activation_fn.reset_modulation()
-
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-
-        gammas = []
-        for i, layer in enumerate(self.layers):
-            gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
-            gammas.append(gamma)
-
-        for t in range(self.tmax - 1):
-            # Stop if converged
-            if converged_mask.all():
-                break
-
-            error = self._compute_error(r_current[-1], self.targets)
-            
-            # Proportional and integral (PI) control
-            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
-            u_next = u_int_next + self.k_p * error
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-
-            psis = self._calculate_psis(u_next)
-
-            # Iterate over layers with control signal
-            for i, layer in enumerate(self.layers):
-                layer.r_prev = r_current[i - 1] if i != 0 else self.input
-
-                # Basal
-                v_ff_current[i] = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-
-                # Apical with teaching signal and Fisher modulation
-                psi = psis[i] # = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
-                gamma = gammas[i]
-
-                e_psi_gamma = torch.tanh(psi + gamma) + 1
-
-                # Soma with modulation
-                # tau = layer.tau # self.dt / self.time_constant_ratio
-                v_current[i] += self.tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
-
-                # layer.activation_fn.set_modulation(e_psi_gamma)
-                r_current[i] = layer.activation_fn(v_current[i])
-
-                layer.v_ff = v_ff_current[i]
-                layer.r = r_current[i]
-
-            u_int_current = u_int_next
-            u_current = u_next
-
-        # Steady-state values per layer
-        rs = [self.input]
-
-        for i, layer in enumerate(self.layers):
-            layer.r = r_current[i]
-            layer.r_ff = layer.activation_fn(v_ff_current[i])
-            layer.r_prev = rs[i]
-            rs.append(r_current[i])
-
-"""
-    Greatly simplified version with correct derivatives
-"""
-class EFC_network_v2(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v2"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
-        JacobianInterface.__init__(self, config)
-        FisherInterface.__init__(self)
-        
-        self.beta = config.beta
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-        u_current = torch.zeros((self.bzs, self.output_size))
-        u_int = torch.zeros((self.bzs, self.output_size))
-
-        for _ in range(1, self.tmax):
-            error = self._compute_error(self.layers[-1].r, self.targets)
-            
-            # Proportional and integral (PI) control
-            u_int = u_int + self.dt * (error - self.alpha * u_current)
-            u_next = u_int + self.k_p * error
-
-            _, Js = self._calculate_full_jacobian()
-
-            # Forward pass
-            for i, layer in enumerate(self.layers):
-                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                layer.r_ff = layer.activation_fn(layer.v_ff)
-
-                psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
-                gamma = self._compute_gamma(layer, i) if not self._first_task else 0.0
-                e_psi_gamma = torch.tanh(psi + gamma) + 1
-
-                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
-                layer.activation_fn.set_modulation(layer.r / (layer.r_ff + 1e-8))
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all():
-                break
-            u_current = u_next
-
-
-"""
-    Efficient implementation with implicit Jacobian calculation for scalability
-"""
-class EFC_network_v3(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v3"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
-        JacobianInterface.__init__(self, config)
-        FisherInterface.__init__(self)
-        
-        self.beta = config.beta_efc
-        self.fisher_normalization = config.fisher_normalization
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-        u_current = torch.zeros((self.bzs, self.output_size))
-        u_int = torch.zeros((self.bzs, self.output_size))
-
-        for t in range(1, self.tmax):
-            error = self._compute_error(self.layers[-1].r, self.targets)
-            
-            # Proportional and integral (PI) control
-            u_int = u_int + self.dt * (error - self.alpha * u_current)
-            u_next = u_int + self.k_p * error
-
-            psis = self._calculate_psis(u_next)
-
-            # Forward pass
-            for i, layer in enumerate(self.layers):
-                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                layer.r_ff = layer.activation_fn(layer.v_ff)
-
-                psi = psis[i]
-                gamma = self._compute_gamma(layer, i, self.fisher_normalization) if not self._first_task else 0.0
-                e_psi_gamma = torch.tanh(psi + gamma) + 1
-
-                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff - layer.r)
-                layer.activation_fn.set_modulation(layer.r / (layer.r_ff + 1e-8))
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all():
-                break
-            u_current = u_next
-
-
-class EFC_network_v4(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v4"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
-        JacobianInterface.__init__(self, config)
-        FisherInterface.__init__(self)
-
-        self.beta = config.beta_efc
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-        u_current = torch.zeros((self.bzs, self.output_size))
-
-        for t in range(1, self.tmax):
-            error = self._compute_error(self.layers[-1].r, self.targets)
-            
-            # Proportional and integral (PI) control
-            u_next = self.k_p * error
-            
-            psis = self._calculate_psis(u_next)
-
-            # Forward pass
-            for i, layer in enumerate(self.layers):
-                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                layer.r_ff = layer.activation_fn(layer.v_ff)
-                
-                psi = psis[i] # ψ = (J^T u) ⊙ r_ff = diag(r_ff) J^T u
-                # gamma = self._compute_gamma(layer, i)
-                # if not self._first_task:
-                #     gamma = torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
-                e_psi_gamma = torch.tanh(psi) + 1 # + gamma) + 1
-
-                layer.r = layer.r + self.tau * (e_psi_gamma * layer.r_ff - layer.r)
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all():
-                break
-            u_current = u_next
-        # err
-        # if self._first_task:
-        #     print(t, torch.min(psi).item(), torch.max(psi).item())
-        # else:
-        #     print(t, torch.min(psi).item(), torch.max(psi).item(), torch.max(gamma).item(), torch.max(gamma).item())
-        # print("error: ",[f"{x:.4f}" for x in error[0].tolist()])
-        # err
-
-
-class EFC_network_v5(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
@@ -241,37 +13,34 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
         self.beta = config.beta_efc
         self.tau = config.taus
 
+    # TODO
+    # - Generalize to _layer_step or something?
+
     @torch.no_grad()
     def _non_dynamical_inversion(self):
         # Calculate Jacobians for each layer
         Js = self._calculate_layerwise_jacobians()
 
         # Compute J_eff and gamma_eff with Q = J^T
-        J_eff, gamma_eff = self._calculate_jeff_and_gammaeff(Js)
+        J_eff, gamma_eff, J_i, gamma_i = self._calculate_jeff_and_gammaeff()
 
         # Compute the output error
         delta_L_minus = self._compute_error(self.y_hat, self.targets)
 
         # Solve for u_star: (alpha I + J_eff) u_star = delta_L_minus - gamma_eff
         u_star = torch.linalg.solve(J_eff + self.alpha * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
+        # Compute the control signal for each layer
+        Qu_i = [torch.bmm(J_i[i].transpose(1, 2), u_star.unsqueeze(-1)).squeeze(-1) for i in range(len(Js))]
 
-        # Apply the control to update neuron outputs
+        # Compute delta_r = (I - J_{i,i-1})^-1 (Qu*_i + gamma_i) for each layer and update r^* = r^- + delta_r
+        delta_r_prev = torch.zeros_like(self.input)
         for i, layer in enumerate(self.layers):
-            layer.r_prev = self.layers[i-1].r if i != 0 else self.input
+            # (Qu*_i + γ_i) ⊙ r^-_i + J_{i,i-1} * Δr_{i-1} where J_{i,i-1} = φ'(W_i * r^-_{i-1}) ⊙ W_i
+            # This is equivalent to φ'(pre_activation) ⊙ (W_i @ Δr_{i-1})
+            delta_r_i = (Qu_i[i] + gamma_i[i]) * layer.r_ff + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+            delta_r_prev = delta_r_i
 
-            v_ff = torch.bmm(layer.r_prev[i].unsqueeze(1), layer.weights.t()).squeeze(1) + layer.bias
-            r_ff = layer.activation_fn(v_ff)
-            
-            J_T = Js[i].transpose(1, 2)  # Q_i = J_i^T
-            layer_u = torch.bmm(J_T, u_star.unsqueeze(-1)).squeeze(-1) 
-            gamma_i = self._compute_gamma(layer)
-            
-            # Multiplicative modulation
-            r = r_ff * (torch.tanh(layer_u + gamma_i) + 1)
-
-            layer.v_ff = v_ff
-            layer.r_ff = r_ff
-            layer.r = r
+            layer.r = layer.r_ff + delta_r_i
             
 
     @torch.no_grad()
@@ -319,6 +88,7 @@ class EFC_network_v5(Network, JacobianInterface, FisherInterface):
             print(t, torch.min(psi).item(), torch.max(psi).item())
         else:
             print(t, torch.min(psi).item(), torch.max(psi).item(), torch.min(gamma).item(), torch.max(gamma).item())
+
 
 class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_Conv_v5_network"):

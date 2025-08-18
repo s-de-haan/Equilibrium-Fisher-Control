@@ -8,8 +8,6 @@ from src.datasets import *
 from src.trainers import Trainer
 from src.utils import dotdict
 
-# TODO config manager from Xander's project
-
 def main():
     # Training configuration
     config = {
@@ -23,15 +21,15 @@ def main():
         "loss_fn": "ce",
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:2",
+        "device": "cpu",
         "output_dir": "./outputs",
         "seed": 1337,
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
-        "target_lr": 1e-2,       # Updated to optimal value
+        "target_lr": 1.0,       # Updated to optimal value
         "alpha_di": 3.0,        # 1/tau for tau=0.2
         "dt_di": 0.0016,         # Time step
         "time_constant_ratio": 0.2,  # tau
-        "tmax_di": 3000,
+        "tmax_di": 500,
         "k_p": 1.0,             # Optimal for G=1, tau=0.2
         "eps": 1e-3,
         "save": False,
@@ -39,10 +37,10 @@ def main():
     config = dotdict(config)
 
     # Load data
-    train_loader, test_loader = ConvMNIST(config=config).get_dataloaders()
+    train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_Mult_network(config=config)
+    model = DFC_Mult_network_clean(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

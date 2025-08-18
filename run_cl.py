@@ -15,12 +15,12 @@ def main():
         "lr": 1e-3,
         "batch_size": 256,
         "epochs": 4,
-        "mode": "di",  # or "di"
+        "mode": "ndi",  # or "di"
         "num_workers": 8,
         "loss_fn": "ce", # "mse"
-        "optimizer": "Adam",
+        "optimizer": "SGD",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:5",
+        "device": "cpu",
         "output_dir": "./outputs",
         "seed": 0,
         "target_lr": 1.0, # needs to be < time_constant_ratio
@@ -35,7 +35,7 @@ def main():
         "eps": 1e-4, # there is an interplay between dt_di and eps and between target_lr and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 1000.0, # efc params
+        "beta_efc": 0.0, # efc params
     }
     config = dotdict(config)
 
@@ -43,7 +43,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = EFC_network_v5(config=config)
+    model = EFC_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

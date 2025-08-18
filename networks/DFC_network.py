@@ -231,7 +231,7 @@ class DFC_Mult_network(Network, JacobianInterface):
     "eps": 1e-4,
 """
 class DFC_Mult_network_clean(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="EFC_network_v4"):
+    def __init__(self, config, name="DFC_Mult_network_clean"):
         Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
 
