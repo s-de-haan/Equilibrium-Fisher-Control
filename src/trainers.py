@@ -91,7 +91,10 @@ class TrainerInterface:
     def _set_optimizer(self):
         if self.config.optimizer == "Adam":
             self.optimizer = torch.optim.Adam(
-                self.model.parameters(), lr=self.config["lr"]
+                self.model.parameters(),
+                lr=self.config["lr"],
+                betas=(0.9, 0.999),
+                eps=5.83238643406511e-07
             )
         elif self.config.optimizer == "SGD":
             self.optimizer = torch.optim.SGD(

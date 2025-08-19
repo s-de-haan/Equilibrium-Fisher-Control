@@ -23,7 +23,7 @@ def main():
         "device": "cpu",
         "output_dir": "./outputs",
         "seed": 0,
-        "target_lr": 1.0, # needs to be < time_constant_ratio
+        "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 1e-3,
         "taus": [0.02, 0.016, 0.01],
         "dt_di": 0.0016,

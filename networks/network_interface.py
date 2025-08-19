@@ -204,10 +204,11 @@ class JacobianInterface:
     def _calculate_jeff_and_gammaeff(self):
         # Recompute forward with requires_grad and retain_grad on modulatable activations
         r_list = []
-        r = self.input.detach()  # Input fixed, no grad
+        r = self.input.detach().requires_grad_(True)  # Enable grad from the start
         for layer in self.layers:
-            r = layer(r)
-            r.requires_grad_(True)
+            # For linear layers
+            a = r @ layer.weights.t() + layer.bias.unsqueeze(0)
+            r = layer.activation_fn(a)
             r.retain_grad()
             r_list.append(r)
         y = r_list[-1]

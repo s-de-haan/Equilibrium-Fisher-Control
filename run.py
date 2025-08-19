@@ -25,13 +25,13 @@ def main():
         "output_dir": "./outputs",
         "seed": 1337,
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
-        "target_lr": 1.0,       # Updated to optimal value
-        "alpha_di": 3.0,        # 1/tau for tau=0.2
-        "dt_di": 0.0016,         # Time step
+        "target_lr": 1e-2,       # Updated to optimal value
+        "alpha_di": 0.0017,        # 1/tau for tau=0.2
+        "dt_di": 0.02,         # Time step
         "time_constant_ratio": 0.2,  # tau
         "tmax_di": 500,
-        "k_p": 1.0,             # Optimal for G=1, tau=0.2
-        "eps": 1e-3,
+        "k_p": 2.0,             # Optimal for G=1, tau=0.2
+        "eps": 1e-4,
         "save": False,
     }
     config = dotdict(config)
@@ -40,7 +40,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_Mult_network_clean(config=config)
+    model = EFC_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

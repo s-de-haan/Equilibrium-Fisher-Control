@@ -109,130 +109,22 @@ class DFC_network(Network, JacobianInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-
-class DFC_Mult_network(Network, JacobianInterface):
-    def __init__(self, config, name="DFC_Mult_network") -> None:
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
-        JacobianInterface.__init__(self, config)
-
-    @torch.no_grad()
-    def _non_dynamical_inversion(self):
-        J, _ = self._calculate_full_jacobian()
-        J_T = J.transpose(1, 2)
-
-        error = self._compute_error(self.y_hat, self.targets)
-        error = error.unsqueeze(2)
-
-        u = torch.linalg.solve(
-            torch.bmm(J, J_T) + self.alpha * torch.eye(J.shape[1]), error
-        )
-
-        psi = torch.bmm(J_T, u).squeeze(-1)
-        psis = torch.split(psi, self.layer_sizes, dim=1)
-
-        rs = [self.input]
-
-        for i, layer in enumerate(self.layers):
-            v_ff = torch.mm(rs[i], layer.weights.t())
-            v_ff += layer.bias.unsqueeze(0).expand_as(v_ff)
-            v = v_ff
-            r_ff = layer.activation_fn(v_ff)
-
-            e_psi = torch.tanh(psis[i]) + 1
-
-            layer.activation_fn.set_m(e_psi)
-            r = layer.activation_fn(v)
-            rs.append(r)
-
-            layer.v_ff = v_ff
-            layer.v = v
-            layer.e_psi = e_psi
-
-            layer.r = r
-            layer.r_ff = r_ff
-            layer.r_prev = rs[i]
-
-    @torch.no_grad()
-    def _dynamical_inversion(self):
-        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
-
-        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
-        u_current = torch.zeros((self.bzs, self.output_size))
-        u_int_current = torch.zeros((self.bzs, self.output_size))
-
-        for i, layer in enumerate(self.layers):
-            v_ff_current[i] = layer.v_ff
-            v_current[i] = layer.v_ff
-            r_current[i] = layer.r
-            layer.activation_fn.reset_modulation()
-
-        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
-
-        for t in range(self.tmax - 1):
-            # Stop if converged
-            if converged_mask.all():
-                break
-
-            error = self._compute_error(r_current[-1], self.targets)
-            
-            # Proportional and integral (PI) control.
-            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
-            u_next = u_int_next + self.k_p * error
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-
-            _, Js = self._calculate_full_jacobian()
-
-            # Iterate over layers with control signal
-            for i, layer in enumerate(self.layers):
-                r_prev = r_current[i - 1] if i != 0 else self.input
-
-                # Basal
-                v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                
-                # Apical
-                e_psi = torch.exp(torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze())
-                # if i == len(self.layers) - 1: # Correct for linear output layer
-                #     e_psi = torch.where(v_ff_current[i] > 0, e_psi, 1 / e_psi)
-
-                # Soma with apical
-                tau = self.dt / self.time_constant_ratio
-                v_current[i] += tau * (e_psi * v_ff_current[i] - v_current[i])
-
-                layer.activation_fn.set_modulation(e_psi)
-                r_current[i] = layer.activation_fn(v_current[i])
-
-                layer.v_ff = v_ff_current[i]
-                layer.r = r_current[i]
-
-            u_int_current = u_int_next
-            u_current = u_next
-
-        # Steady-state values per layer
-        rs = [self.input]
-
-        for i, layer in enumerate(self.layers):
-            layer.r = r_current[i]
-            layer.r_ff = layer.activation_fn(v_ff_current[i])
-            layer.r_prev = rs[i]
-            rs.append(r_current[i])
-
 """
-    "layers": [784, 400, 400, 2],
+    "layers": [784, 400, 400, 10],
     "lr": 1e-3,
-    "target_lr": 1.0,
-    "dt_di": 0.0016,
+    "target_lr": 1e-2,
+    "dt_di": 0.02,
     "time_constant_ratio": 0.2,
     "tmax_di": 500,
-    "k_p": 1.0,
+    "k_p": 2.0,
     "eps": 1e-4,
+    "alpha_di": 0.0017,
+
+    MNIST > 97.50
 """
-class DFC_Mult_network_clean(Network, JacobianInterface, FisherInterface):
-    def __init__(self, config, name="DFC_Mult_network_clean"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+class DFC_Mult_network(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="DFC_Mult_network"):
+        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
         JacobianInterface.__init__(self, config)
 
     @torch.no_grad()
@@ -240,7 +132,7 @@ class DFC_Mult_network_clean(Network, JacobianInterface, FisherInterface):
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
         u_current = torch.zeros((self.bzs, self.output_size))
 
-        for t in range(1, self.tmax):
+        for _ in range(1, self.tmax):
             error = self._compute_error(self.layers[-1].r, self.targets)
             
             # Proportional control

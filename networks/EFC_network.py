@@ -6,18 +6,16 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
         self.tau = config.taus
 
-    # TODO
-    # - Generalize to _layer_step or something?
-
     @torch.no_grad()
     def _non_dynamical_inversion(self):
+        print(self.input.shape)
         # Calculate Jacobians for each layer
         Js = self._calculate_layerwise_jacobians()
 
@@ -29,6 +27,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
         # Solve for u_star: (alpha I + J_eff) u_star = delta_L_minus - gamma_eff
         u_star = torch.linalg.solve(J_eff + self.alpha * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
+        # print(torch.norm(u_star))
         # Compute the control signal for each layer
         Qu_i = [torch.bmm(J_i[i].transpose(1, 2), u_star.unsqueeze(-1)).squeeze(-1) for i in range(len(Js))]
 
@@ -37,38 +36,28 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         for i, layer in enumerate(self.layers):
             # (Qu*_i + γ_i) ⊙ r^-_i + J_{i,i-1} * Δr_{i-1} where J_{i,i-1} = φ'(W_i * r^-_{i-1}) ⊙ W_i
             # This is equivalent to φ'(pre_activation) ⊙ (W_i @ Δr_{i-1})
-            delta_r_i = (Qu_i[i] + gamma_i[i]) * layer.r_ff + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+            delta_r_i = (Qu_i[i] + gamma_i[i]) + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
             delta_r_prev = delta_r_i
 
             layer.r = layer.r_ff + delta_r_i
+            print(f"Layer {i} delta_r norm: {torch.norm(delta_r_i)}")
             
 
     @torch.no_grad()
     def _dynamical_inversion(self):
         u_current = torch.zeros((self.bzs, self.output_size))
-        u_int_current = torch.zeros((self.bzs, self.output_size))
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
-        for t in range(self.tmax):
-            if converged_mask.all():
-                break
-
+        for _ in range(self.tmax):
             error = self._compute_error(self.layers[-1].r, self.targets)
             
-            # Proportional and integral (PI) control
-            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
-            u_next = u_int_next + self.k_p * error
-
-            # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-
+            # Proportional control
+            u_next = self.k_p * error
             psis = self._calculate_psis(u_next)
 
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
                 layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-
-                # Basal
                 layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
                 layer.r_ff = layer.activation_fn(layer.v_ff)
 
@@ -78,16 +67,13 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 # Soma with modulation
-                tau = self.tau[i]
-                layer.r = layer.r + tau * (e_psi_gamma * layer.r_ff - layer.r)
+                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff - layer.r)
 
-            u_int_current = u_int_next
+            # Compute convergence check
+            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+            if converged_mask.all():
+                break
             u_current = u_next
-
-        if self._first_task:
-            print(t, torch.min(psi).item(), torch.max(psi).item())
-        else:
-            print(t, torch.min(psi).item(), torch.max(psi).item(), torch.min(gamma).item(), torch.max(gamma).item())
 
 
 class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
