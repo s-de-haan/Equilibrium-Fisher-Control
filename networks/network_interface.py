@@ -348,50 +348,13 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 # Accumulate Fisher Information using elementwise maximum
-                self._fisher[n] = torch.maximum(self._fisher[n], current_fisher[n])
-        
+                self._fisher[n] += current_fisher[n]
 
-    def _compute_fisher_modulation(self, layer, i):
-        if self._first_task:
-            return 0.0
-        
-        """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((layer.weights.shape[0]))
-        fisher_norm = 0.0
 
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
-                if 'weights' in n:
-                    gamma += torch.sum(base_gamma, dim=1)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)                    
-                elif 'bias' in n:
-                    gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
-    
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-    
-    @torch.no_grad()
-    def _compute_gamma_with_activity(self, layer, i):
-        if self._first_task:
-            return 0.0
-        
-        F_weights = self._fisher[f'layers.{i}._weights']
-        F_bias = self._fisher[f'layers.{i}._bias']
-
-        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-
-        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
-
-        return -self.beta * gamma / fisher_norm
-    
     @torch.no_grad()
     def _compute_gamma(self, layer, i):
         if self._first_task:
-            return 0.0
+            return torch.tensor([0.0])
         
         F_weights = self._fisher[f'layers.{i}._weights']
         F_bias = self._fisher[f'layers.{i}._bias']

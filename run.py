@@ -16,7 +16,7 @@ def main():
         "lr": 1e-3,
         "batch_size": 256,
         "epochs": 20,
-        "mode": "di",
+        "mode": "ndi",
         "num_workers": 8,
         "loss_fn": "ce",
         "optimizer": "Adam",

@@ -15,7 +15,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
-        print(self.input.shape)
         # Calculate Jacobians for each layer
         Js = self._calculate_layerwise_jacobians()
 
@@ -27,7 +26,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
         # Solve for u_star: (alpha I + J_eff) u_star = delta_L_minus - gamma_eff
         u_star = torch.linalg.solve(J_eff + self.alpha * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
-        # print(torch.norm(u_star))
+
         # Compute the control signal for each layer
         Qu_i = [torch.bmm(J_i[i].transpose(1, 2), u_star.unsqueeze(-1)).squeeze(-1) for i in range(len(Js))]
 
@@ -40,7 +39,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             delta_r_prev = delta_r_i
 
             layer.r = layer.r_ff + delta_r_i
-            print(f"Layer {i} delta_r norm: {torch.norm(delta_r_i)}")
             
 
     @torch.no_grad()
@@ -48,7 +46,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         u_current = torch.zeros((self.bzs, self.output_size))
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
-        for _ in range(self.tmax):
+        for t in range(self.tmax):
             error = self._compute_error(self.layers[-1].r, self.targets)
             
             # Proportional control
@@ -63,7 +61,10 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
                 # Apical with teaching signal and Fisher modulation
                 psi = psis[i]
-                gamma = self._compute_fisher_modulation(layer, i)
+                gamma = self._compute_gamma(layer, i)
+                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                    scaling_factor = torch.abs(psi).mean()
+                    gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
                 e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 # Soma with modulation
@@ -71,9 +72,19 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all():
+            if converged_mask.all() and t > 10:
                 break
             u_current = u_next
+
+        print(f"Time step {t}: gamma {gamma.max().item():.4f}, psi {psi.max().item():.4f}")
+
+        # Print max and norm of psi and gamma for each layer
+        # for i, layer in enumerate(self.layers):
+        #     psi = psis[i]
+        #     gamma = self._compute_gamma(layer, i)
+        #     print(f"Time {t} Layer {i}: psi max={psi.max().item():.4f}, psi norm={psi.norm().item():.4f}, "
+        #             f"gamma max={gamma.max().item():.4f}, gamma norm={gamma.norm().item():.4f}")
+            
 
 
 class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
