@@ -6,7 +6,7 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
@@ -20,12 +20,13 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
         # Compute J_eff and gamma_eff with Q = J^T
         J_eff, gamma_eff, J_i, gamma_i = self._calculate_jeff_and_gammaeff()
+        # print(gamma_eff)
 
         # Compute the output error
         delta_L_minus = self._compute_error(self.y_hat, self.targets)
 
         # Solve for u_star: (alpha I + J_eff) u_star = delta_L_minus - gamma_eff
-        u_star = torch.linalg.solve(J_eff + self.alpha * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
+        u_star = torch.linalg.solve(J_eff + self.alpha_I * torch.eye(J_eff.shape[1]), delta_L_minus - gamma_eff)
 
         # Compute the control signal for each layer
         Qu_i = [torch.bmm(J_i[i].transpose(1, 2), u_star.unsqueeze(-1)).squeeze(-1) for i in range(len(Js))]
@@ -282,3 +283,93 @@ class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
             psi_list[i] = psi
         
         return psi_list
+
+class EFC_network_old(Network, JacobianInterface, FisherInterface):
+    def __init__(self, config, name="EFC_network_old"):
+        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
+        JacobianInterface.__init__(self, config)
+        FisherInterface.__init__(self)
+
+        self.beta = config.beta_efc
+        self.clamp = False
+        self.tau = config.tau
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
+
+        v_ff_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod)) for lod in layer_out_dims]
+        u_current = torch.zeros((self.bzs, self.output_size))
+        u_int_current = torch.zeros((self.bzs, self.output_size))
+
+        for i, layer in enumerate(self.layers):
+            v_ff_current[i] = layer.v_ff
+            v_current[i] = layer.v_ff
+            r_current[i] = layer.r
+
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
+        t=0
+
+        while converged_mask.float().mean().item() <= 0.99:
+            t = t + 1
+            # Stop if converged
+            if converged_mask.all():
+                break
+
+            error = self._compute_error(r_current[-1], self.targets)
+
+            # Proportional and integral (PI) control
+            u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
+            u_next = u_int_next + self.k_p * error
+
+            # Compute convergence check
+            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+
+            _, Js = self._calculate_full_jacobian()
+
+            # Iterate over layers with control signal
+            for i, layer in enumerate(self.layers):
+                layer.r_previous = r_current[i - 1] if i != 0 else self.input
+
+                # Basal
+                v_ff_current[i] = layer.r_previous.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+
+                # Apical with teaching signal and Fisher modulation
+                psi = torch.bmm(u_next.unsqueeze(1), Js[i]).squeeze()
+                gamma = self._compute_fisher_modulation(layer, i) if not self._first_task else 0.0
+                if self.clamp:
+                    if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                        scaling_factor = torch.abs(psi).mean()
+                        gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                        torch.clamp(gamma, min=-torch.abs(psi), max=torch.abs(psi))
+
+                e_psi_gamma = torch.tanh(psi + gamma) + 1
+
+                # Soma with modulation
+                # tau = layer.tau # self.dt / self.time_constant_ratio
+                tau = self.tau # self.dt / self.time_constant_ratio
+                v_current[i] += tau * (e_psi_gamma * v_ff_current[i] - v_current[i])
+
+                r_current[i] = layer.activation_fn(v_current[i])
+
+                layer.linear_activations = v_ff_current[i]
+                layer.activations = r_current[i]
+
+            u_int_current = u_int_next
+            u_current = u_next
+
+        # Steady-state values per layer
+        rs = [self.input]
+
+        for i, layer in enumerate(self.layers):
+            layer.r = r_current[i]
+            layer.r_ff = layer.activation_fn(v_ff_current[i])
+            layer.r_prev = rs[i]
+            rs.append(r_current[i])
+            mask = ~converged_mask
+            if mask.any():
+                layer.r[mask] = layer.r_ff[mask]
+        
+        print(t, converged_mask.sum().item() / self.bzs)

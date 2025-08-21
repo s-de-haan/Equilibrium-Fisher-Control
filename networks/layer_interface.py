@@ -39,9 +39,11 @@ class Layer(nn.Module):
         self._bias = self.feedforward[0].bias
 
     def forward(self, x):
+        self.r_prev = x
         a = torch.matmul(x, self.weights.t())
         a += self.bias.unsqueeze(0).expand_as(a)
         self.r = self.activation_fn(a)
+        self.r_ff = self.r
         self.v_ff = a
 
         return self.r
