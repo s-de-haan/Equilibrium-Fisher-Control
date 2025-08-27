@@ -226,11 +226,12 @@ class JacobianInterface:
 
             grad_outputs = torch.zeros_like(y)
             grad_outputs[:, k] = 1.0
+
             y.backward(gradient=grad_outputs, retain_graph=True)
 
             # Collect the k-th row for each layer
             for l, r_i in enumerate(r_list):
-                grad_flat = r_i.grad.view(self.bzs, -1)
+                grad_flat = r_i.grad.view(self.bzs, -1).clone()
                 ji_rows_per_layer[l].append(grad_flat)
 
         # Now process per layer

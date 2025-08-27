@@ -12,7 +12,7 @@ def main():
     config = {
         "layers": [784, 400, 400, 2],
         "num_classes": 2,
-        "lr": 0.00001,
+        "lr": 0.0001,
         "batch_size": 256,
         "epochs": 20,
         "mode": "ndi",  # or "di"
@@ -25,7 +25,7 @@ def main():
         "seed": 0,
         "target_lr": 1e-2, # needs to be < time_constant_ratio
         "alpha_di": 0.0017,
-        "alpha_I": 0.001,
+        "alpha_I": 0.1,
         "tau": 0.032,
         "dt_di": 0.02,
         "psi_lr": 0.1,
@@ -36,7 +36,7 @@ def main():
         "eps": 1e-4, # there is an interplay between dt_di and eps and between target_lr and eps
         "save": False,
         "importance_ewc": 1.0, # ewc params
-        "beta_efc": 1.0, # efc params
+        "beta_efc": 0.1, # efc params
     }
     config = dotdict(config)
 

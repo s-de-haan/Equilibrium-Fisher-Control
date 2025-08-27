@@ -11,7 +11,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
-        self.tau = config.taus
+        self.tau = config.tau
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
@@ -20,7 +20,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
         # Compute J_eff and gamma_eff with Q = J^T
         J_eff, gamma_eff, J_i, gamma_i = self._calculate_jeff_and_gammaeff()
-        # print(gamma_eff)
 
         # Compute the output error
         delta_L_minus = self._compute_error(self.y_hat, self.targets)
@@ -36,7 +35,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         for i, layer in enumerate(self.layers):
             # (Qu*_i + γ_i) ⊙ r^-_i + J_{i,i-1} * Δr_{i-1} where J_{i,i-1} = φ'(W_i * r^-_{i-1}) ⊙ W_i
             # This is equivalent to φ'(pre_activation) ⊙ (W_i @ Δr_{i-1})
-            delta_r_i = (Qu_i[i] + gamma_i[i]) + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+            delta_r_i = (Qu_i[i] + gamma_i[i]) * layer.r_ff + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
             delta_r_prev = delta_r_i
 
             layer.r = layer.r_ff + delta_r_i
