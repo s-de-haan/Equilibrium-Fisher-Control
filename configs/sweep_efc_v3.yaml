@@ -3,6 +3,15 @@ metric:
   goal: maximize
   name: final_avg_accuracy
 parameters:
+  num_workers:
+    value: 0
+  setting:
+    value: domainIL
+  fisher_normalization: 
+    distribution: categorical
+    values:
+      - True
+      - False
   alpha_di:
     distribution: categorical
     values:
@@ -14,51 +23,42 @@ parameters:
     distribution: categorical
     values:
       - 1
-      - 2.5
       - 5
-      - 7.5
-      - 10
-  eps:
-    distribution: categorical
-    values:
-      - 1e-03
-      - 1e-04
-      - 2e-04
+      - 50
+      - 500
+      - 5000
   lr:
     distribution: categorical
     values:
-      - 1.5e-06
-      - 3e-06
-      - 5e-06
-      - 1e-05
-      - 5e-05
-      - 1e-04
+      - 1e-03
   method:
-    value: efc
+    values: 
+      - efc_v3
   optimizer:
     distribution: categorical
     values:
       - Adam
-      - SGD
   seed:
     distribution: categorical
     values:
-      - 1
-      - 2
-      - 3
-      - 4
-      - 5
-  tau:
+      - 69
+      - 42
+      - 6969
+  dt_di:
     distribution: categorical
     values:
-      - 0.002
-      - 0.008
-      - 0.016
-      - 0.032
+      - 1e-03
+      - 5e-02
+      - 1e-02
+  eps:
+    distribution: categorical
+    values:
+      - 1e-02
+      - 1e-03
+      - 5e-04
   target_lr:
     distribution: categorical
     values:
-      - 1e-04
-      - 1e-03
-      - 2e-03
+      - 1e-02
+      - 5e-02
 program: train.py

@@ -6,24 +6,24 @@ from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
-from networks.EFC_network import EFC_network_v2, EFC_network_v3 
+from networks.EFC_network import EFC_BP_network
 from networks.BP_network_taskIL import TaskIncrementalBP_network
 from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
 from src.datasets import SplitMNIST
-from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
+from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST
 
 from src.trainers import WandBTrainerCL
 from src.trainers_taskIL import WandBTrainerCLTaskIL
 from src.utils import str2bool
+from train_args import parse_args
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
     # Network architecture & training hyperparameters:
-    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
+    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 10],
                         help="Network layer sizes (e.g., 784 400 400 2)")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=15, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
                         help="whether to run with (di) or without (ndi) dynamic inversion")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for dataloader")
@@ -31,26 +31,26 @@ def parse_args():
                         help="whether to train with cross entropy ('ce') or mean squared error ('mse') loss")
     parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
     parser.add_argument("--scheduler", type=str, default="CosineAnnealingLR", help="Scheduler")
-    
     # Environment settings hyperparameters
     parser.add_argument("--device", type=str, default="cuda", help="GPU/CPU device")
     parser.add_argument("--output_dir", type=str, default="./outputs",
                         help="Output directory for saving training and evaluation logs")
     parser.add_argument("--seed", type=int, default=1337, help="Random seed")
     parser.add_argument("--save", type=str2bool, default="false", help="Whether to save the model (true/false)")
-    
     # EFC-specific hyperparameters:
     parser.add_argument("--clamp", type=str2bool, default="false", help="Whether to clamp")
-    parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
-    parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
+    parser.add_argument("--lr", type=float, default=1.5e-6, help="Learning rate")
+    parser.add_argument("--beta_efc", type=float, default=5000.0, help="Beta parameter for EFC")
+    parser.add_argument("--target_lr", type=float, default=1, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
     parser.add_argument("--tau", type=float, default=0.008, help="tau parameter")
+    parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check")
     
     # EWC-specific hyperparameters:
     parser.add_argument("--importance_ewc", type=float, default=1.0, help="Importance parameter for EWC")
     
     # Training method: ewc, efc, or bp.
-    parser.add_argument("--method", type=str, default="efc", choices=["ewc", "efc", "bp", "dfc", "efc_bp", "efc_v2", "efc_v3"],
+    parser.add_argument("--method", type=str, default="efc", choices=["efc", "bp", "efc_bp"],
                         help="Training method to use")
     
     # Additional parameters as needed:
@@ -58,14 +58,9 @@ def parse_args():
     parser.add_argument("--time_constant_ratio", type=float, default=0.2, help="Time constant ratio")
     parser.add_argument("--tmax_di", type=int, default=500, help="tmax for dynamic inversion")
     parser.add_argument("--k_p", type=float, default=2.0, help="Proportional gain for dynamic inversion")
-    parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check") 
-    parser.add_argument("--dataset", type=str, default="MNIST", choices=["MNIST", "CIFAR10"], help="Dataset to use")
-    parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"], help="Whether to use stability gap")
-    parser.add_argument("--setting", type=str, default="domainIL", choices=["domainIL", "taskIL", "classIL"], help="Setting to use")
-    parser.add_argument("--run_name", type=str, default="default", help="Run name for wandb")
-    parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="Whether to normalize the Fisher matrix")
-    parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to compute stability gap")
-    
+    parser.add_argument("--run_name", type=str, default=None, help="Name of the run")
+    parser.add_argument("--psi_lr", type=float, default=0.5, help="Learning rate for psi")
+    parser.add_argument("--setting", type=str, default="domainIL", choices=["taskIL", "classIL", "domainIL"],)
     # You can add any other hyperparameters you need.
     args, unknown = parser.parse_known_args()
     if unknown:
@@ -81,8 +76,7 @@ def get_model(model_name: str, setting: str, config):
             "dfc": DFC_network,
             "ewc": EWC_network,
             "efc": EFC_network,
-            "efc_v2": EFC_network_v2,
-            "efc_v3": EFC_network_v3
+            "efc_bp": EFC_BP_network,
         }
     elif setting == "taskIL":
         models = {
@@ -90,27 +84,7 @@ def get_model(model_name: str, setting: str, config):
             "efc_bp": TaskIncremental_EFC_BP_network,
             "efc": TaskIncremental_EFC_network
         }
-    else:
-        raise ValueError("Invalid setting")
     return models[model_name](config)
-
-def get_dataset(setting: str, dataset: str, config):
-    """Get dataset based on setting."""
-    if setting == "domainIL" and dataset == "MNIST":
-        return DomainILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "taskIL" and dataset == "MNIST":
-        return TaskILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "classIL" and dataset == "MNIST":
-        return ClassILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "domainIL" and dataset == "CIFAR10":
-        return DomainILCIFAR10(config).get_all_tasks_dataloaders()
-    elif setting == "taskIL" and dataset == "CIFAR10":
-        return TaskILCIFAR10(config).get_all_tasks_dataloaders()
-    elif setting == "classIL" and dataset == "CIFAR10":
-        return ClassILCIFAR10(config).get_all_tasks_dataloaders()
-    else:
-        raise ValueError("Invalid setting or dataset")
-    
 
 def main():
     args = parse_args()
@@ -128,18 +102,29 @@ def main():
     print(OmegaConf.to_yaml(config))
     
     model = get_model(config.method, config.setting, config)
-    tasks_dataloaders = get_dataset(config.setting, config.dataset, config)
-    project_name = f"{config.setting}_{config.dataset}_incremental_learning_baselines"
     
-    wandb.init(project=project_name, 
-        name=config.run_name,
-        entity="equilibrium-fisher-control",
-        config=OmegaConf.to_container(config))
-    
-    if config.setting == "taskIL":
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
-    else:
+    if config.setting == "domainIL":
+        wandb.init(project="domain_incremental_learning_baselines", 
+                   name=config.run_name,
+                   entity="equilibrium-fisher-control",
+                   config=OmegaConf.to_container(config))
+        tasks_dataloaders = SplitMNIST(config).get_all_tasks_dataloaders()
         trainer = WandBTrainerCL(model, tasks_dataloaders, config)
+    elif config.setting == "taskIL":
+        wandb.init(project="task_incremental_learning_baselines", 
+                   name=config.run_name,
+                   entity="equilibrium-fisher-control",
+                   config=OmegaConf.to_container(config))
+        tasks_dataloaders = TaskILMNIST(config).get_all_tasks_dataloaders()
+        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
+    elif config.setting == "classIL":
+        wandb.init(project="class_incremental_learning_baselines", 
+                   name=config.run_name,
+                   entity="equilibrium-fisher-control",
+                   config=OmegaConf.to_container(config))
+        tasks_dataloaders = ClassILMNIST(config).get_all_tasks_dataloaders()
+        trainer = WandBTrainerCL(model, tasks_dataloaders, config)
+    
     trainer.train()
 
 if __name__ == "__main__":

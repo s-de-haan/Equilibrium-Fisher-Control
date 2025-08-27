@@ -303,7 +303,7 @@ class FisherInterface:
         self._fisher = {}  # Accumulated Fisher matrix
         self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
-    
+        
     def _calculate_fisher(self, dataloader):
         """Compute Fisher Information Matrix across entire dataset"""
         fisher = {}
