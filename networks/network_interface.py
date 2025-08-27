@@ -349,23 +349,6 @@ class FisherInterface:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
 
-
-    # @torch.no_grad()
-    # def _compute_gamma(self, layer, i):
-    #     if self._first_task:
-    #         return torch.tensor([0.0])
-        
-    #     F_weights = self._fisher[f'layers.{i}._weights']
-    #     F_bias = self._fisher[f'layers.{i}._bias']
-
-    #     weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-    #     bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-
-    #     gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-    #     fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
-
-    #     return -self.beta * gamma / fisher_norm
-
     @torch.no_grad()
     def _compute_gamma(self, layer, i):
         if self._first_task:

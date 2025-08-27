@@ -11,7 +11,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         FisherInterface.__init__(self)
         
         self.beta = config.beta_efc
-        self.tau = config.tau
 
     @torch.no_grad()
     def _non_dynamical_inversion(self):
@@ -75,16 +74,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             if converged_mask.all() and t > 10:
                 break
             u_current = u_next
-
-        print(f"Time step {t}: gamma {gamma.max().item():.4f}, psi {psi.max().item():.4f}")
-
-        # Print max and norm of psi and gamma for each layer
-        # for i, layer in enumerate(self.layers):
-        #     psi = psis[i]
-        #     gamma = self._compute_gamma(layer, i)
-        #     print(f"Time {t} Layer {i}: psi max={psi.max().item():.4f}, psi norm={psi.norm().item():.4f}, "
-        #             f"gamma max={gamma.max().item():.4f}, gamma norm={gamma.norm().item():.4f}")
-            
 
 
 class EFC_Conv_v5_network(nn.Module, JacobianInterface, FisherInterface):
