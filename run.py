@@ -8,8 +8,6 @@ from src.datasets import *
 from src.trainers import Trainer
 from src.utils import dotdict
 
-# TODO config manager from Xander's project
-
 def main():
     # Training configuration
     config = {
@@ -18,31 +16,31 @@ def main():
         "lr": 1e-3,
         "batch_size": 256,
         "epochs": 20,
-        "mode": "di",
+        "mode": "ndi",
         "num_workers": 8,
         "loss_fn": "ce",
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:2",
+        "device": "cpu",
         "output_dir": "./outputs",
         "seed": 1337,
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
         "target_lr": 1e-2,       # Updated to optimal value
-        "alpha_di": 3.0,        # 1/tau for tau=0.2
-        "dt_di": 0.0016,         # Time step
+        "alpha_di": 0.0017,        # 1/tau for tau=0.2
+        "dt_di": 0.02,         # Time step
         "time_constant_ratio": 0.2,  # tau
-        "tmax_di": 3000,
-        "k_p": 1.0,             # Optimal for G=1, tau=0.2
-        "eps": 1e-3,
+        "tmax_di": 500,
+        "k_p": 2.0,             # Optimal for G=1, tau=0.2
+        "eps": 1e-4,
         "save": False,
     }
     config = dotdict(config)
 
     # Load data
-    train_loader, test_loader = ConvMNIST(config=config).get_dataloaders()
+    train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = DFC_Mult_network(config=config)
+    model = EFC_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()

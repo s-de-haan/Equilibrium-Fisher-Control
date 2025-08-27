@@ -80,7 +80,7 @@ class SplitMNIST:
         
         transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            transforms.Normalize((0.1307,), (0.3081,)),
         ])
         
         self.train_dataset = datasets.MNIST(

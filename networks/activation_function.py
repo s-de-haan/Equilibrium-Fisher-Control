@@ -79,7 +79,7 @@ class Softplus(ActivationFunction):
     def __init__(self):
         super().__init__()
         self.modulation = torch.tensor(1)
-        self.beta = 5
+        self.beta = 1
         self.softplus = nn.Softplus(beta=self.beta)
         self.sigmoid = nn.Sigmoid()
     

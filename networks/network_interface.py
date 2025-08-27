@@ -162,6 +162,7 @@ class JacobianInterface:
         self.tau = config.tau
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
+        self.alpha_I = float(config.alpha_I)
 
         assert self.alpha > 0
 
@@ -198,31 +199,64 @@ class JacobianInterface:
             Js.append(J)
         return Js
 
-    def _calculate_jeff_and_gammaeff(self, Js):
-        """
-        Compute J_eff and gamma_eff using a single backward pass with Q = J^T.
-        """
-        output_size = self.layer_sizes[-1]
+    @torch.enable_grad()
+    def _calculate_jeff_and_gammaeff(self):
+        # Recompute forward with requires_grad and retain_grad on modulatable activations
+        r_list = []
+        r = self.input.detach().requires_grad_(True)  # Enable grad from the start
+        for layer in self.layers:
+            # For linear layers
+            a = r @ layer.weights.t() + layer.bias.unsqueeze(0)
+            r = layer.activation_fn(a)
+            r.retain_grad()
+            r_list.append(r)
+        y = r_list[-1]
+        out_dim = y.shape[1]  # Assume vector output (bzs, classes)
 
-        # Initialize at the output layer (i = L-1)
-        r_ff_L = self.layers[-1].r_ff
-        gamma_L = self._compute_gamma(self.layers[-1])
-        J_eff = (Js[-1].transpose(1, 2) * r_ff_L.unsqueeze(-1))  # Q_L = J_L^T
-        gamma_eff = (gamma_L * r_ff_L).unsqueeze(-1)
+        J_eff = torch.zeros(self.bzs, out_dim, out_dim)
+        gamma_eff = torch.zeros(self.bzs, out_dim)
 
-        # Cumulative Jacobian starts as identity
-        cumulative_J = torch.eye(output_size).expand(self.bzs, output_size, output_size)
+        # Collect rows of cumulative Jacobians for each layer
+        ji_rows_per_layer = [[] for _ in r_list]
+        for k in range(out_dim):
+            # Zero previous grads
+            for r_i in r_list:
+                if r_i.grad is not None:
+                    r_i.grad.zero_()
 
-        # Backward pass from L-2 to 0
-        for i in range(len(self.layers)-2, -1, -1):
-            cumulative_J = torch.bmm(cumulative_J, Js[i+1])
-            r_ff_i = self.layers[i].r_ff
-            gamma_i = self._compute_gamma(self.layers[i])
-            Q_i = Js[i].transpose(1, 2)  # Q_i = J_i^T
-            J_eff = J_eff + torch.bmm(cumulative_J, (Q_i * r_ff_i.unsqueeze(-1)))
-            gamma_eff = gamma_eff + torch.bmm(cumulative_J, (gamma_i * r_ff_i).unsqueeze(-1))
+            grad_outputs = torch.zeros_like(y)
+            grad_outputs[:, k] = 1.0
 
-        return J_eff.squeeze(-1), gamma_eff.squeeze(-1)
+            y.backward(gradient=grad_outputs, retain_graph=True)
+
+            # Collect the k-th row for each layer
+            for l, r_i in enumerate(r_list):
+                grad_flat = r_i.grad.view(self.bzs, -1).clone()
+                ji_rows_per_layer[l].append(grad_flat)
+
+        # Now process per layer
+        J_list = []
+        gamma_list = []
+        for l in range(len(r_list)):
+            # Stack rows to form Ji_flat (bzs, out_dim, flat_dim)
+            Ji_flat = torch.stack(ji_rows_per_layer[l], dim=1)
+            J_list.append(Ji_flat)
+
+            r_ff_flat = r_list[l].detach().view(self.bzs, -1)
+
+            gamma_i = self._compute_fisher_modulation(self.layers[l], l)
+            gamma_list.append(gamma_i)
+            gamma_flat = gamma_i.view(self.bzs, -1) if not self._first_task else 0.0
+
+            # Compute contribution to J_eff: Ji @ diag(r) @ Ji^T = (Ji_flat * r_ff_flat.unsqueeze(1)) @ Ji_flat.transpose(1, 2)
+            temp = Ji_flat * r_ff_flat.unsqueeze(1)
+            J_eff += torch.bmm(temp, Ji_flat.transpose(1, 2))
+
+            # Compute contribution to gamma_eff: Ji @ (gamma ⊙ r)
+            gamma_r_flat = (gamma_flat * r_ff_flat).unsqueeze(-1)
+            gamma_eff += torch.bmm(Ji_flat, gamma_r_flat).squeeze(-1)
+
+        return J_eff, gamma_eff, J_list, gamma_list
 
     def _calculate_full_jacobian(self):
         Js = [None] * len(self.layers)
@@ -304,7 +338,7 @@ class FisherInterface:
         return fisher
 
     def complete_task(self, dataloader):
-        """Update Fisher and Bayesian posterior with normalization and inverse."""
+        """Update Fisher and Bayesian posterior """
         current_fisher = self._calculate_fisher(dataloader)
         self._theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
 
@@ -313,16 +347,34 @@ class FisherInterface:
             self._first_task = False
         else:
             for n in self._fisher:
-                # Accumulate Fisher Information
                 self._fisher[n] += current_fisher[n]
-        
 
+    @torch.no_grad()
+    def _compute_gamma(self, layer, i):
+        if self._first_task:
+            return torch.zeros((self.bzs, layer.weights.shape[0]))
+        
+        F_weights = self._fisher[f'layers.{i}._weights']
+        F_bias = self._fisher[f'layers.{i}._bias']
+        
+        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
+        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
+        
+        # Gamma: batched, activity-dependent for weights
+        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+        
+        # Fisher norm: per-output, no activity or batch sum
+        fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
+        fisher_norm = torch.sqrt(fisher_norm)
+        
+        return -self.beta * gamma / fisher_norm
+    
+    @torch.no_grad()
     def _compute_fisher_modulation(self, layer, i):
         if self._first_task:
             return 0.0
-        
         """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((layer.weights.shape[0]))
+        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
         fisher_norm = 0.0
 
         for n, p in layer.named_parameters():
@@ -330,44 +382,14 @@ class FisherInterface:
             if p.requires_grad:
                 base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
                 if 'weights' in n:
-                    gamma += torch.sum(base_gamma, dim=1)                    
+                    gamma += (layer.r_prev @ base_gamma.T)
+                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
                 elif 'bias' in n:
                     gamma += base_gamma
-    
+                    fisher_norm += self._fisher[full_name]**2
+
         return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-    
-    @torch.no_grad()
-    def _compute_gamma_with_activity(self, layer, i):
-        if self._first_task:
-            return 0.0
-        
-        F_weights = self._fisher[f'layers.{i}._weights']
-        F_bias = self._fisher[f'layers.{i}._bias']
 
-        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-
-        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
-
-        return -self.beta * gamma / fisher_norm
-    
-    @torch.no_grad()
-    def _compute_gamma(self, layer, i):
-        if self._first_task:
-            return 0.0
-        
-        F_weights = self._fisher[f'layers.{i}._weights']
-        F_bias = self._fisher[f'layers.{i}._bias']
-
-        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-
-        gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-        fisher_norm = torch.sqrt((layer.r_prev @ F_weights.T ** 2).sum() + F_bias ** 2 + 1e-8)
-
-        return -self.beta * gamma / fisher_norm
-    
     @torch.no_grad()
     def _compute_expected_update(self, layer):
         if self._first_task:
