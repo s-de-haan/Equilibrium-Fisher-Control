@@ -109,19 +109,7 @@ class DFC_network(Network, JacobianInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-"""
-    "layers": [784, 400, 400, 10],
-    "lr": 1e-3,
-    "target_lr": 1e-2,
-    "dt_di": 0.02,
-    "time_constant_ratio": 0.2,
-    "tmax_di": 500,
-    "k_p": 2.0,
-    "eps": 1e-4,
-    "alpha_di": 0.0017,
 
-    MNIST > 97.50
-"""
 class DFC_Mult_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="DFC_Mult_network"):
         Network.__init__(self, DFC_layer, ReLU, Linear, config, name)

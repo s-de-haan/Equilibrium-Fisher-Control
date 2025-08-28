@@ -369,40 +369,8 @@ class FisherInterface:
         
         return -self.beta * gamma / fisher_norm
     
-    @torch.no_grad()
-    def _compute_fisher_modulation(self, layer, i):
-        if self._first_task:
-            return 0.0
-        """Compute Fisher-based modulation for parameter preservation"""
-        gamma = torch.zeros((self.bzs, layer.weights.shape[0]))
-        fisher_norm = 0.0
 
-        for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
-            if p.requires_grad:
-                base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
-                if 'weights' in n:
-                    gamma += (layer.r_prev @ base_gamma.T)
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=1)
-                elif 'bias' in n:
-                    gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
-
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
-
-    @torch.no_grad()
-    def _compute_expected_update(self, layer):
-        if self._first_task:
-            return
-        
-        teaching_signal = layer.r - layer.r_ff
-        scaling_factor = 2 * self.lr  / layer.r_prev.shape[0]
-        
-        layer.expected_weight_update = scaling_factor * teaching_signal.t().mm(layer.r_prev)  # Shape: (out_features, in_features)
-        layer.expected_bias_update = scaling_factor * teaching_signal # TODO problem: the samples are talking to eachother now, maybe just not have this
-    
-    
-    def _compute_fisher_modulation_conv(self, layer, i):
+    def _compute_fisher_gamma_conv(self, layer, i):
         """
         Compute Fisher-based modulation for convolutional layers.
         
