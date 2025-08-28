@@ -1,6 +1,7 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset, TensorDataset
 import torchvision
+import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from PIL import Image
 import numpy as np
@@ -105,8 +106,6 @@ class TaskILMNIST:
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
         ]
 
-# Class Incremental Learning class
-
 class DomainILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
@@ -114,44 +113,108 @@ class DomainILMNIST:
         self.batch_size = self.config.batch_size
         self.flatten = True if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
         self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
         
-        
-    def _load_data(self):
-        train_dataset = torchvision.datasets.MNIST(root='./data', train=True, download=True)
-        test_dataset = torchvision.datasets.MNIST(root='./data', train=False, download=True)
-        return (train_dataset.data, train_dataset.targets), (test_dataset.data, test_dataset.targets)
-    
-    def get_dataloaders(self, task_id):
-        
-        # All classes (0-9) in each task
-        task_splits = [list(range(10)) for _ in range(self.num_tasks)]
-        task_classes = task_splits[task_id]
-
-        # Filter data (all classes, but with domain shift)
-        train_mask = torch.isin(self.train_targets, torch.tensor(task_classes))
-        test_mask = torch.isin(self.test_targets, torch.tensor(task_classes))
-        
-        train_task_data = self.train_data[train_mask]
-        train_task_targets = self.train_targets[train_mask]
-        test_task_data = self.test_data[test_mask]
-        test_task_targets = self.test_targets[test_mask]
-        
-        # Domain-specific transform (rotation as domain shift)
-        transform = transforms.Compose([
-            transforms.RandomRotation(degrees=(task_id * 10, task_id * 10 + 10)),
+        # Define transform
+        self.transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize((0.1307,), (0.3081,))
+            transforms.Normalize((0.1307,), (0.3081,)),
         ])
         
-        # Create datasets (no label remapping)
-        train_dataset = BaseMNISTDataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten=self.flatten)
-        test_dataset = BaseMNISTDataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten=self.flatten)
+        # Load datasets
+        self.train_dataset = datasets.MNIST(
+            root="./data", train=True, transform=self.transform, download=True
+        )
+        self.test_dataset = datasets.MNIST(
+            root="./data", train=False, transform=self.transform, download=True
+        )
         
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
+        # Define tasks as pairs of classes for even/odd classification
+        self.tasks = [
+            [0, 1],  # Task 0: 0 (even) vs 1 (odd)
+            [2, 3],  # Task 1: 2 (even) vs 3 (odd)  
+            [4, 5],  # Task 2: 4 (even) vs 5 (odd)
+            [6, 7],  # Task 3: 6 (even) vs 7 (odd)
+            [8, 9],  # Task 4: 8 (even) vs 9 (odd)
+        ]
+        
+        # Set input channels for config
+        config.in_channels = 1
+        
+    def _filter_dataset(self, dataset, classes):
+        """Filter dataset to only include specified classes."""
+        indices = []
+        for i, (_, target) in enumerate(dataset):
+            if target in classes:
+                indices.append(i)
+        return Subset(dataset, indices)
+    
+    def _one_hot_encode(self, targets):
+        """Convert targets to one-hot encoding for binary classification."""
+        return torch.eye(2)[targets].float()
+        
+    def get_dataloaders(self, task_id):
+        """Get train/test dataloaders for a specific task with even/odd binary classification."""
+        classes = self.tasks[task_id]
+        
+        # Filter datasets to only include the two classes for this task
+        train_dataset = self._filter_dataset(self.train_dataset, classes)
+        test_dataset = self._filter_dataset(self.test_dataset, classes)
+        
+        # Process training data
+        train_data = torch.stack([train_dataset[i][0] for i in range(len(train_dataset))])
+        train_targets = torch.tensor([
+            classes.index(self.train_dataset.targets[train_dataset.indices[i]].item())
+            for i in range(len(train_dataset))
+        ])
+        
+        # Process test data
+        test_data = torch.stack([test_dataset[i][0] for i in range(len(test_dataset))])
+        test_targets = torch.tensor([
+            classes.index(self.test_dataset.targets[test_dataset.indices[i]].item())
+            for i in range(len(test_dataset))
+        ])
+        
+        # Flatten data if required
+        if self.flatten:
+            train_data = train_data.view(-1, 28 * 28)
+            test_data = test_data.view(-1, 28 * 28)
+        
+        # Create tensor datasets with one-hot encoded targets (binary classification)
+        train_tensor_dataset = TensorDataset(
+            train_data.float(),
+            self._one_hot_encode(train_targets)
+        )
+        test_tensor_dataset = TensorDataset(
+            test_data.float(),
+            self._one_hot_encode(test_targets)
+        )
+        
+        # Create device-aware generator
+        try:
+            generator = torch.Generator(device=self.device)
+        except RuntimeError:
+            # Fallback to CPU generator if device generator not supported
+            generator = torch.Generator(device='cpu')
+        
+        # Create dataloaders
+        train_loader = DataLoader(
+            dataset=train_tensor_dataset,
+            batch_size=self.batch_size,
+            generator=generator.manual_seed(self.config.seed),
+            num_workers=self.config.num_workers,
+            pin_memory=True,
+            shuffle=True,
+        )
+        
+        test_loader = DataLoader(
+            dataset=test_tensor_dataset,
+            batch_size=self.batch_size,
+            generator=generator.manual_seed(self.config.seed),
+            num_workers=self.config.num_workers,
+            pin_memory=True,
+            shuffle=False,
+        )
+        
         return train_loader, test_loader
     
     def get_all_tasks_dataloaders(self):
@@ -160,7 +223,7 @@ class DomainILMNIST:
             self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
         ]
 
-# Domain Incremental Learning class
+# Class Incremental Learning class
 class ClassILMNIST:
     def __init__(self, config):
         self.num_tasks = 5
@@ -375,62 +438,6 @@ class ClassILCIFAR10:
         
         return train_loader, test_loader
         
-    def get_all_tasks_dataloaders(self):
-        """Get dataloaders for all tasks."""
-        return [
-            self.get_dataloaders(task_id) for task_id in range(self.num_tasks)
-        ]
-        
-class DomainILCIFAR10:
-    def __init__(self, config):
-        self.num_tasks = 5
-        self.config = config
-        self.flatten = False if self.config.get('flatten_imgs') == "default" else str2bool(self.config.get('flatten_imgs'))
-        self.batch_size = self.config.batch_size
-        self.device = self.config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        (self.train_data, self.train_targets), (self.test_data, self.test_targets) = self._load_data()
-        
-    def _load_data(self):
-        train_dataset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True)
-        test_dataset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True)
-        # CIFAR-10 data is numpy arrays of shape (N, 32, 32, 3), convert to tensors
-        train_data = torch.tensor(train_dataset.data, dtype=torch.uint8)
-        train_targets = torch.tensor(train_dataset.targets, dtype=torch.long)
-        test_data = torch.tensor(test_dataset.data, dtype=torch.uint8)
-        test_targets = torch.tensor(test_dataset.targets, dtype=torch.long)
-        return (train_data, train_targets), (test_data, test_targets)
-    
-    def get_dataloaders(self, task_id):
-        # All classes (0-9) in each task
-        task_splits = [list(range(10)) for _ in range(self.num_tasks)]
-        task_classes = task_splits[task_id]
-
-        # Filter data (all classes, but with domain shift)
-        train_mask = torch.isin(self.train_targets, torch.tensor(task_classes))
-        test_mask = torch.isin(self.test_targets, torch.tensor(task_classes))
-        
-        train_task_data = self.train_data[train_mask]
-        train_task_targets = self.train_targets[train_mask]
-        test_task_data = self.test_data[test_mask]
-        test_task_targets = self.test_targets[test_mask]
-        
-        # Domain-specific transform (rotation as domain shift)
-        transform = transforms.Compose([
-            transforms.RandomRotation(degrees=(task_id * 10, task_id * 10 + 10)),
-            transforms.ToTensor(),  # Scales [0, 255] to [0, 1] if not already normalized
-            # No normalization applied
-        ])
-        
-        # Create datasets (no label remapping)
-        train_dataset = BaseCIFAR10Dataset(self.device, train_task_data, train_task_targets, task_classes, transform, flatten = self.flatten)
-        test_dataset = BaseCIFAR10Dataset(self.device, test_task_data, test_task_targets, task_classes, transform, flatten = self.flatten)
-        
-        train_loader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, 
-                                  num_workers=self.config.num_workers)
-        test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, 
-                                 num_workers=self.config.num_workers)
-        return train_loader, test_loader
-    
     def get_all_tasks_dataloaders(self):
         """Get dataloaders for all tasks."""
         return [

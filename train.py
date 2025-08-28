@@ -6,11 +6,7 @@ from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
-from networks.EFC_network import EFC_network_v2, EFC_network_v3 
-from networks.BP_network_taskIL import TaskIncrementalBP_network
-from networks.EFC_network_taskIL import TaskIncremental_EFC_BP_network, TaskIncremental_EFC_network
-from src.datasets import SplitMNIST
-from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, DomainILCIFAR10, ClassILCIFAR10
+from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, ClassILCIFAR10
 
 from src.trainers import WandBTrainerCL
 from src.trainers_taskIL import WandBTrainerCLTaskIL
@@ -24,7 +20,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--mode", type=str, default="di", choices=["ndi", "di"],
+    parser.add_argument("--mode", type=str, default="ndi", choices=["ndi", "di"],
                         help="whether to run with (di) or without (ndi) dynamic inversion")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for dataloader")
     parser.add_argument("--loss_fn", type=str, default='ce',
@@ -44,6 +40,7 @@ def parse_args():
     parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
     parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
+    parser.add_argument("--alpha_I", type=float, default=1e-4, help="Alpha for nondynamic inversion")
     parser.add_argument("--tau", type=float, default=0.008, help="tau parameter")
     
     # EWC-specific hyperparameters:
@@ -75,26 +72,16 @@ def parse_args():
 
 def get_model(model_name: str, setting: str, config):
     """Get model based on name and setting."""
-    if setting == "domainIL" or setting == "classIL":
-        models = {
-            "bp": BP_network,
-            "dfc": DFC_network,
-            "ewc": EWC_network,
-            "efc": EFC_network,
-            "efc_v2": EFC_network_v2,
-            "efc_v3": EFC_network_v3
-        }
-    elif setting == "taskIL":
-        models = {
-            "bp": TaskIncrementalBP_network,
-            "efc_bp": TaskIncremental_EFC_BP_network,
-            "efc": TaskIncremental_EFC_network
-        }
-    else:
-        raise ValueError("Invalid setting")
+    models = {
+        "bp": BP_network,
+        "dfc": DFC_network,
+        "ewc": EWC_network,
+        "efc": EFC_network,
+    }
     return models[model_name](config)
 
 def get_dataset(setting: str, dataset: str, config):
+    print(f"Getting dataset for setting: {setting}, dataset: {dataset}")
     """Get dataset based on setting."""
     if setting == "domainIL" and dataset == "MNIST":
         return DomainILMNIST(config).get_all_tasks_dataloaders()
@@ -102,8 +89,6 @@ def get_dataset(setting: str, dataset: str, config):
         return TaskILMNIST(config).get_all_tasks_dataloaders()
     elif setting == "classIL" and dataset == "MNIST":
         return ClassILMNIST(config).get_all_tasks_dataloaders()
-    elif setting == "domainIL" and dataset == "CIFAR10":
-        return DomainILCIFAR10(config).get_all_tasks_dataloaders()
     elif setting == "taskIL" and dataset == "CIFAR10":
         return TaskILCIFAR10(config).get_all_tasks_dataloaders()
     elif setting == "classIL" and dataset == "CIFAR10":
@@ -136,10 +121,7 @@ def main():
         entity="equilibrium-fisher-control",
         config=OmegaConf.to_container(config))
     
-    if config.setting == "taskIL":
-        trainer = WandBTrainerCLTaskIL(model, tasks_dataloaders, config)
-    else:
-        trainer = WandBTrainerCL(model, tasks_dataloaders, config)
+    trainer = WandBTrainerCL(model, tasks_dataloaders, config)
     trainer.train()
 
 if __name__ == "__main__":

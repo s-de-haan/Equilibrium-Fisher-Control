@@ -1,4 +1,19 @@
 .DS_store
+/outputs/*
+/outputs/
+/outputs
+outputs
+
+/wandb/*
+/wandb/
+/wandb
+wandb
+
+/configs/*
+/configs/
+/configs
+configs
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

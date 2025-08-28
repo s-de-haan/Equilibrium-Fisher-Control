@@ -13,7 +13,7 @@ def main():
     config = {
         "layers": [784, 400, 400, 10],
         "num_classes": 10,
-        "lr": 1e-3,
+        "lr": 1e-6,
         "batch_size": 256,
         "epochs": 20,
         "mode": "ndi",
@@ -21,7 +21,7 @@ def main():
         "loss_fn": "ce",
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cpu",
+        "device": "cuda:2",
         "output_dir": "./outputs",
         "seed": 1337,
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],

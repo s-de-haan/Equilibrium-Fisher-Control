@@ -12,7 +12,7 @@ def main():
     config = {
         "layers": [784, 400, 400, 2],
         "num_classes": 2,
-        "lr": 0.0001,
+        "lr": 1e-6,
         "batch_size": 256,
         "epochs": 20,
         "mode": "ndi",  # or "di"
@@ -44,7 +44,7 @@ def main():
     tasks_dataloaders = SplitMNIST(config=config).get_all_tasks_dataloaders()
 
     # Train model
-    model = EFC_network(config=config)
+    model = BP_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

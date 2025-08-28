@@ -36,44 +36,7 @@ class Linear(ActivationFunction):
 
     def derivative(self, x):
         return torch.ones_like(x)
-
-
-class mLinear(ActivationFunction):
-    def __init__(self):
-        super().__init__()
-        self.modulation = torch.tensor(1)
-
-    def set_modulation(self, modulation):
-        self.modulation = modulation
-
-    def reset_m(self):
-        self.modulation = torch.tensor(1)
-
-    def forward(self, x):
-        return x
-
-    def derivative(self, x):
-        return torch.ones_like(x) * self.modulation
-
-
-class mReLU(ActivationFunction):
-    def __init__(self):
-        super().__init__()
-        self.modulation = torch.tensor(1)
-
-    def set_modulation(self, modulation):
-        self.modulation = modulation
-
-    def reset_modulation(self):
-        self.modulation = torch.tensor(1)
-
-    def forward(self, x):
-        return x.clamp(min=0)
-
-    def derivative(self, x):
-        grad = torch.ones_like(x) * self.modulation
-        grad[x < 0] = 0
-        return grad
+    
     
 class Softplus(ActivationFunction):
     def __init__(self):
