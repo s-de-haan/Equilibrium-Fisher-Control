@@ -36,8 +36,14 @@ class Linear(ActivationFunction):
 
     def derivative(self, x):
         return torch.ones_like(x)
-    
-    
+
+class Tanh(ActivationFunction):
+    def forward(self, x):
+        return torch.tanh(x)
+
+    def derivative(self, x):
+        return 1 - torch.tanh(x) ** 2
+
 class Softplus(ActivationFunction):
     def __init__(self):
         super().__init__()

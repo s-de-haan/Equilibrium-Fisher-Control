@@ -160,7 +160,7 @@ class TrainerInterface:
     def train(self):
         raise NotImplementedError("train must be implemented in a subclass.")
 
-    def _train_step(self, epoch: int):
+    def _train_step(self, epoch: int, task_id: int):
         self.callback_handler.on_train_step_begin(
             training_config=self.config,
             train_loader=self.train_loader,
@@ -175,69 +175,27 @@ class TrainerInterface:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            y_hat = self.model(X)
+            y_hat = self.model(X, task_id)
             loss = self.model.calculate_loss(y_hat, y)
 
             self.optimizer.zero_grad()
-            self.model.backward(y)
+            self.model.backward(y, task_id)
             self.optimizer.step()
 
             epoch_loss += loss.item()
 
             if epoch_loss != epoch_loss:
                 raise ArithmeticError("NaN detected in train loss")
-
-            ### Test for task A at every step to measure the stability gap
-            if self.config.stability_gap:
-                epoch_test_loss, accuracy = self._test_step_stability_gap(epoch)
-                metrics = {"task_1_loss_stability_gap": epoch_test_loss, "task_1_accuracy_stability_gap": accuracy}
-                wandb.log(metrics)
-                
             
             self.callback_handler.on_train_step_end(training_config=self.config)
-
 
         epoch_loss /= len(self.train_loader)
 
         return epoch_loss
     
-    @torch.no_grad()
-    def _test_step_stability_gap(self, epoch):
-        self.callback_handler.on_test_step_begin(
-            training_config=self.config,
-            test_loader=self.test_loader,
-            epoch=epoch,
-        )
-
-        epoch_loss = 0
-        total = 0
-        correct = 0
-
-        for X, y in self.test_loader_first_task:
-            X = X.to(self.device)
-            y = y.to(self.device)
-
-            y_hat = self.model(X)
-
-            loss = self.model.loss_fn(y_hat, y)
-
-            epoch_loss += loss.item()
-            total += y.size(0)
-            correct += (y_hat.argmax(dim=1) == y.argmax(dim=1)).sum().item()
-
-            if epoch_loss != epoch_loss:
-                raise ArithmeticError("NaN detected in test loss")
-            
-            self.callback_handler.on_test_step_end(training_config=self.config)
-
-        epoch_loss /= len(self.test_loader)
-        accuracy = 100 * correct / total
-
-        return epoch_loss, accuracy
-    
     
     @torch.no_grad()
-    def _test_step(self, epoch):
+    def _test_step(self, epoch, task_id):
         self.callback_handler.on_test_step_begin(
             training_config=self.config,
             test_loader=self.test_loader,
@@ -252,7 +210,7 @@ class TrainerInterface:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            y_hat = self.model(X)
+            y_hat = self.model(X, task_id)
 
             loss = self.model.loss_fn(y_hat, y)
 
@@ -339,11 +297,11 @@ class TrainerCL(TrainerInterface):
                     test_loader=self.test_loader
                 )
 
-                epoch_train_loss = self._train_step(epoch)
+                epoch_train_loss = self._train_step(epoch, task_id)
                 metrics.epoch_train_loss = epoch_train_loss
 
                 if self.test_loader is not None:
-                    epoch_test_loss, accuracy = self._test_step(epoch)
+                    epoch_test_loss, accuracy = self._test_step(epoch, task_id)
                     metrics.epoch_test_loss = epoch_test_loss
                     metrics.accuracy = accuracy
 
@@ -364,6 +322,7 @@ class TrainerCL(TrainerInterface):
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
             self._set_optimizer()
+            
         if self.save:
             self._save_model()
 
@@ -399,18 +358,18 @@ class WandBTrainerCL(TrainerCL):
                 metrics = {f"task_{task_id}/{k}": v for k, v in metrics.items()}
             wandb.log(metrics, step=step)
 
-    def _train_step(self, epoch: int) -> float:
+    def _train_step(self, epoch: int, task_id: int = None) -> float:
         """Single training step with WandB logging."""
         # Perform training step (callbacks still receive the local epoch if needed)
-        epoch_loss = super()._train_step(epoch)
+        epoch_loss = super()._train_step(epoch, task_id)
         # Log training loss using the global step counter
         self._log_metrics({"train/loss": epoch_loss}, self.global_step)
         self.global_step += 1  # Increment the global step after each training epoch
         return epoch_loss
 
-    def _test_step(self, step: int) -> tuple:
+    def _test_step(self, step: int, task_id: int = None) -> tuple:
         """Single test step with WandB logging."""
-        epoch_loss, accuracy = super()._test_step(step)
+        epoch_loss, accuracy = super()._test_step(step, task_id)
         self._log_metrics({
             "test/loss": epoch_loss,
             "test/accuracy": accuracy
@@ -431,7 +390,7 @@ class WandBTrainerCL(TrainerCL):
             )
 
             # Use the current global_step for testing logging
-            epoch_test_loss, accuracy = self._test_step(self.global_step)
+            epoch_test_loss, accuracy = self._test_step(self.global_step, task_id)
             task_accuracies.append(accuracy)
 
             # Log per-task test metrics using the current global step
@@ -463,3 +422,4 @@ class WandBTrainerCL(TrainerCL):
                 "final_avg_accuracy": sum(self.task_accuracies[-1]) / len(self.task_accuracies[-1]),
                 "final_forgetting": max(self.task_accuracies[0]) - min(self.task_accuracies[-1])
             })
+

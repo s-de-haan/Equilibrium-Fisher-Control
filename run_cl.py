@@ -37,7 +37,9 @@ def main():
         "save": False,
         "importance_ewc": 1.0, # ewc params
         "beta_efc": 0.1, # efc params
-        "flatten_imgs": True
+        "flatten_imgs": True,
+        "num_tasks": 5,
+        "classes_per_task": 2,
     }
     config = dotdict(config)
 

@@ -6,7 +6,6 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, Softplus, Softplus, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         

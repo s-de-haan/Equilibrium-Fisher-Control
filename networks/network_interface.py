@@ -14,6 +14,29 @@ class Network(nn.Module):
         self.device = config.device
         self.lr = config.lr
         self.name = name
+        self.setting = config.setting
+        
+        # Task IL setup: precompute task masks
+        if self.setting == "taskIL":
+            self.num_tasks = getattr(config, 'num_tasks', 5)
+            self.classes_per_task = getattr(config, 'classes_per_task', 2)
+            self._setup_task_masks()
+
+    def _setup_task_masks(self):
+        """Precompute task masks for efficient indexing."""
+        self.task_masks = {}
+        self.task_masks_complement = {}
+        
+        for task_id in range(self.num_tasks):
+            start_idx = task_id * self.classes_per_task
+            end_idx = (task_id + 1) * self.classes_per_task
+            
+            # Mask for current task outputs
+            self.task_masks[task_id] = slice(start_idx, end_idx)
+            
+            # Mask for all other task outputs (for zeroing gradients)
+            complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
+            self.task_masks_complement[task_id] = complement_indices
 
     @property
     def layer_sizes(self):
@@ -27,11 +50,15 @@ class Network(nn.Module):
     def linear_activations(self):
         return [layer.v_ff for layer in self.layers]
 
-    def forward(self, x):
+    def forward(self, x, task_id=None):
         self.input = x
         self.bzs = x.shape[0]
         for layer in self.layers:
             x = layer(x)
+
+        if self.setting == "taskIL":
+            x = x[:, self.task_masks[task_id]]
+
         self.y_hat = x
         return x
 
@@ -90,12 +117,16 @@ class JacobianInterface:
 
         assert self.alpha > 0
 
-    def backward(self, y):
+    def backward(self, y, task_id=None):
         self._set_targets(y)
         self._inversion()
 
         for layer in self.layers:
             layer.backward()
+
+        if self.setting == "taskIL": # freeze other heads
+            self.layers[-1].weights.grad[self.task_masks_complement[task_id], :].zero_()
+            self.layers[-1].bias.grad[self.task_masks_complement[task_id]].zero_()
 
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
