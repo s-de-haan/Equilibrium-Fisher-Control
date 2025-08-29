@@ -58,82 +58,6 @@ class Network(nn.Module):
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
 
-class EFC_CNN_network(nn.Module):
-    def __init__(self, activation_fn, out_activation_fn, config, name="EFC_CNN_network"):
-        """
-        Initialize the EFC CNN network based on the paper's architecture.
-        
-        Args:
-            config: Configuration object with attributes like in_channels, num_classes, device, etc.
-            name: Name of the network (default: "EFC_CNN_network").
-        """
-        super().__init__()
-
-        # Define activation functions for compatibility with base Network
-        self.activation_fn = activation_fn  # Used in modules
-        self.out_activation_fn = out_activation_fn  # No activation before softmax (handled by loss)
-        
-        # Additional config attributes specific to CNN
-        self.in_channels = config.in_channels  # e.g., 1 for grayscale, 3 for RGB
-        self.num_classes = config.num_classes  # Number of output classes
-        
-        # Create the network architecture
-        self.create_network()
-
-
-    def create_network(self):
-        """
-        Build the CNN architecture: 4 conv modules + 1 FC layer, with separate BN layers.
-        From: Vinyals et al. "Matching Networks for One Shot Learning" (2017)
-        Args:
-            config: Configuration object.
-        """
-        self.layers = nn.ModuleList()  # Layers for EFC modulation (conv and FC)
-        self.bn_layers = nn.ModuleList()  # BatchNorm layers, not modulated
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        
-        # Input channels for the first layer
-        current_channels = self.in_channels
-        
-        # 4 Convolutional Modules
-        for i in range(4):
-            conv_layer = DFC_Conv_layer(
-                in_channels=current_channels,
-                out_channels=64,
-                kernel_size=3,
-                stride=1,
-                padding=0,
-                activation_fn=self.activation_fn()
-            )
-            bn_layer = nn.BatchNorm2d(64)
-            self.layers.append(conv_layer)
-            self.bn_layers.append(bn_layer)
-            current_channels = 64
-        
-        # Fully Connected Layer
-        self.layers.append(
-            nn.Linear(64, self.num_classes)
-        )
-
-    def forward(self, x):
-        self.input = x
-        self.bzs = x.shape[0]
-        
-        # Process through 4 convolutional modules
-        for i in range(4):  # 4 modules
-            conv_layer = self.layers[i]
-            bn_layer = self.bn_layers[i]
-            x = conv_layer(x)  # Convolution + ReLU
-            x = bn_layer(x)    # Batch normalization
-            x = self.pool(x)   # Max-pooling after each module
-        
-        # Flatten and apply final FC layer
-        x = x.view(self.bzs, -1)  # [batch_size, 64]
-        x = self.layers[-1](x)    # [batch_size, num_classes]
-        
-        self.y_hat = x
-        return x
-
 
 class JacobianInterface:
     def __init__(self, config):
@@ -244,7 +168,7 @@ class JacobianInterface:
 
             r_ff_flat = r_list[l].detach().view(self.bzs, -1)
 
-            gamma_i = self._compute_fisher_modulation(self.layers[l], l)
+            gamma_i = self._compute_gamma(self.layers[l], l)
             gamma_list.append(gamma_i)
             gamma_flat = gamma_i.view(self.bzs, -1) if not self._first_task else 0.0
 
@@ -367,7 +291,7 @@ class FisherInterface:
         fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
         fisher_norm = torch.sqrt(fisher_norm)
         
-        return -self.beta * gamma / fisher_norm
+        return - self.beta * gamma / fisher_norm
     
 
     def _compute_fisher_gamma_conv(self, layer, i):

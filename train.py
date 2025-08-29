@@ -9,7 +9,6 @@ from networks.EFC_network import EFC_network
 from src.dataloaders import TaskILMNIST, DomainILMNIST, ClassILMNIST, TaskILCIFAR10, ClassILCIFAR10
 
 from src.trainers import WandBTrainerCL
-from src.trainers_taskIL import WandBTrainerCLTaskIL
 from src.utils import str2bool
 
 def parse_args():
