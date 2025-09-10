@@ -7,7 +7,6 @@ from networks.layers import *
 class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
-        
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
         self.loss_fn = nn.MSELoss() if config.loss_fn == "mse" else nn.CrossEntropyLoss()
         self.loss_fn_name = config.loss_fn
@@ -50,14 +49,14 @@ class Network(nn.Module):
     def linear_activations(self):
         return [layer.v_ff for layer in self.layers]
 
-    def forward(self, x, task_id=None):
+    def forward(self, x):
         self.input = x
         self.bzs = x.shape[0]
         for layer in self.layers:
             x = layer(x)
 
         if self.setting == "taskIL":
-            x = x[:, self.task_masks[task_id]]
+            x = x[:, self.task_masks[self.task_id]]
 
         self.y_hat = x
         return x
@@ -117,16 +116,16 @@ class JacobianInterface:
 
         assert self.alpha > 0
 
-    def backward(self, y, task_id=None):
+    def backward(self, y):
         self._set_targets(y)
         self._inversion()
 
         for layer in self.layers:
             layer.backward()
 
-        if self.setting == "taskIL": # freeze other heads
-            self.layers[-1].weights.grad[self.task_masks_complement[task_id], :].zero_()
-            self.layers[-1].bias.grad[self.task_masks_complement[task_id]].zero_()
+        # if self.setting == "taskIL": # freeze other heads
+        #     self.layers[-1].weights.grad[self.task_masks_complement[self.task_id], :].zero_()
+        #     self.layers[-1].bias.grad[self.task_masks_complement[self.task_id]].zero_()
 
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
@@ -152,30 +151,38 @@ class JacobianInterface:
         for layer in self.layers:
             J = layer.compute_layerwise_jacobian()
             Js.append(J)
+
+        if self.setting == "taskIL":
+            Js[-1] = Js[-1][:, self.task_masks[self.task_id], :]
+
         return Js
 
     @torch.enable_grad()
     def _calculate_jeff_and_gammaeff(self):
         # Recompute forward with requires_grad and retain_grad on modulatable activations
-        r_list = []
-        r = self.input.detach().requires_grad_(True)  # Enable grad from the start
+        x = self.input.detach().requires_grad_(True)
+        activations_with_grad = []
+        
         for layer in self.layers:
-            # For linear layers
-            a = r @ layer.weights.t() + layer.bias.unsqueeze(0)
-            r = layer.activation_fn(a)
-            r.retain_grad()
-            r_list.append(r)
-        y = r_list[-1]
-        out_dim = y.shape[1]  # Assume vector output (bzs, classes)
+            x = layer.forward(x)
+            x.retain_grad()
+            activations_with_grad.append(x)
+        
+        y = activations_with_grad[-1]
+
+        if self.setting == "taskIL":
+            y = y[:, self.task_masks[self.task_id]]
+
+        out_dim = y.shape[1]
 
         J_eff = torch.zeros(self.bzs, out_dim, out_dim)
         gamma_eff = torch.zeros(self.bzs, out_dim)
 
         # Collect rows of cumulative Jacobians for each layer
-        ji_rows_per_layer = [[] for _ in r_list]
+        ji_rows_per_layer = [[] for _ in activations_with_grad]
         for k in range(out_dim):
             # Zero previous grads
-            for r_i in r_list:
+            for r_i in activations_with_grad:
                 if r_i.grad is not None:
                     r_i.grad.zero_()
 
@@ -185,27 +192,33 @@ class JacobianInterface:
             y.backward(gradient=grad_outputs, retain_graph=True)
 
             # Collect the k-th row for each layer
-            for l, r_i in enumerate(r_list):
-                grad_flat = r_i.grad.view(self.bzs, -1).clone()
+            for l, r_i in enumerate(activations_with_grad):
+                if self.setting == "taskIL" and l == len(activations_with_grad) - 1:
+                    grad_flat = r_i.grad[:, self.task_masks[self.task_id]].view(self.bzs, -1).clone()
+                else:
+                    grad_flat = r_i.grad.view(self.bzs, -1).clone()
                 ji_rows_per_layer[l].append(grad_flat)
 
         # Now process per layer
         J_list = []
         gamma_list = []
-        for l in range(len(r_list)):
+        for l in range(len(activations_with_grad)):
             # Stack rows to form Ji_flat (bzs, out_dim, flat_dim)
             Ji_flat = torch.stack(ji_rows_per_layer[l], dim=1)
             J_list.append(Ji_flat)
 
-            r_ff_flat = r_list[l].detach().view(self.bzs, -1)
+            r_ff_flat = activations_with_grad[l].detach().view(self.bzs, -1)
+            if self.setting == "taskIL" and l == len(self.layers) - 1:
+                r_ff_flat = r_ff_flat[:, self.task_masks[self.task_id]]
 
             gamma_i = self._compute_gamma(self.layers[l], l)
+            if self.setting == "taskIL" and l == len(self.layers) - 1:
+                gamma_i = gamma_i[:, self.task_masks[self.task_id]]
             gamma_list.append(gamma_i)
             gamma_flat = gamma_i.view(self.bzs, -1) if not self._first_task else 0.0
 
             # Compute contribution to J_eff: Ji @ diag(r) @ Ji^T = (Ji_flat * r_ff_flat.unsqueeze(1)) @ Ji_flat.transpose(1, 2)
-            temp = Ji_flat * r_ff_flat.unsqueeze(1)
-            J_eff += torch.bmm(temp, Ji_flat.transpose(1, 2))
+            J_eff += torch.bmm(Ji_flat * r_ff_flat.unsqueeze(1), Ji_flat.transpose(1, 2))
 
             # Compute contribution to gamma_eff: Ji @ (gamma ⊙ r)
             gamma_r_flat = (gamma_flat * r_ff_flat).unsqueeze(-1)

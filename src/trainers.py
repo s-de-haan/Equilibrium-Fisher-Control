@@ -28,6 +28,7 @@ class TrainerInterface:
         self.device = config.device
         self.save = config.save
         self.callbacks = callbacks
+        self.setting = config.setting
 
         self._set_device(self.device)
         self.model.to(self.device)
@@ -160,7 +161,7 @@ class TrainerInterface:
     def train(self):
         raise NotImplementedError("train must be implemented in a subclass.")
 
-    def _train_step(self, epoch: int, task_id: int):
+    def _train_step(self, epoch: int):
         self.callback_handler.on_train_step_begin(
             training_config=self.config,
             train_loader=self.train_loader,
@@ -175,11 +176,11 @@ class TrainerInterface:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            y_hat = self.model(X, task_id)
+            y_hat = self.model(X)
             loss = self.model.calculate_loss(y_hat, y)
 
             self.optimizer.zero_grad()
-            self.model.backward(y, task_id)
+            self.model.backward(y)
             self.optimizer.step()
 
             epoch_loss += loss.item()
@@ -206,11 +207,14 @@ class TrainerInterface:
         total = 0
         correct = 0
 
+        if self.setting == "taskIL":
+            self.model.task_id = task_id
+
         for X, y in self.test_loader:
             X = X.to(self.device)
             y = y.to(self.device)
 
-            y_hat = self.model(X, task_id)
+            y_hat = self.model(X)
 
             loss = self.model.loss_fn(y_hat, y)
 
@@ -285,7 +289,10 @@ class TrainerCL(TrainerInterface):
             self.callback_handler.on_task_begin(
                 training_config=self.config, task_id=task_id + 1
             )
-            
+
+            if self.setting == "taskIL":
+                self.model.task_id = task_id
+
             if task_id == 0:
                 self.test_loader_first_task = test_loader
 
@@ -297,7 +304,7 @@ class TrainerCL(TrainerInterface):
                     test_loader=self.test_loader
                 )
 
-                epoch_train_loss = self._train_step(epoch, task_id)
+                epoch_train_loss = self._train_step(epoch)
                 metrics.epoch_train_loss = epoch_train_loss
 
                 if self.test_loader is not None:
@@ -337,7 +344,7 @@ class TrainerCL(TrainerInterface):
                 epoch=task_id,
             )
 
-            epoch_test_loss, accuracy = self._test_step(0)
+            epoch_test_loss, accuracy = self._test_step(0, task_id)
             
             logger.info(
                 f"Task {task_id + 1} - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
@@ -358,10 +365,10 @@ class WandBTrainerCL(TrainerCL):
                 metrics = {f"task_{task_id}/{k}": v for k, v in metrics.items()}
             wandb.log(metrics, step=step)
 
-    def _train_step(self, epoch: int, task_id: int = None) -> float:
+    def _train_step(self, epoch: int) -> float:
         """Single training step with WandB logging."""
         # Perform training step (callbacks still receive the local epoch if needed)
-        epoch_loss = super()._train_step(epoch, task_id)
+        epoch_loss = super()._train_step(epoch)
         # Log training loss using the global step counter
         self._log_metrics({"train/loss": epoch_loss}, self.global_step)
         self.global_step += 1  # Increment the global step after each training epoch

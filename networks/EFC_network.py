@@ -6,6 +6,7 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
+        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
@@ -33,7 +34,14 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         for i, layer in enumerate(self.layers):
             # (Qu*_i + γ_i) ⊙ r^-_i + J_{i,i-1} * Δr_{i-1} where J_{i,i-1} = φ'(W_i * r^-_{i-1}) ⊙ W_i
             # This is equivalent to φ'(pre_activation) ⊙ (W_i @ Δr_{i-1})
-            delta_r_i = (Qu_i[i] + gamma_i[i]) * layer.r_ff + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+            if self.setting == "taskIL" and i == len(self.layers) - 1:
+                # For final layer in Task IL, only update current task's activations
+                delta_r_i = torch.zeros_like(layer.r_ff)
+                task_slice = self.task_masks[self.task_id]
+                delta_r_i[:, task_slice] = (Qu_i[i] + gamma_i[i]) * layer.r_ff[:, task_slice] + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+            else:
+                delta_r_i = (Qu_i[i] + gamma_i[i]) * layer.r_ff + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
+
             delta_r_prev = delta_r_i
 
             layer.r = layer.r_ff + delta_r_i

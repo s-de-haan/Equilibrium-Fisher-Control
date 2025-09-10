@@ -22,6 +22,6 @@ class EWC_network(Network, FisherInterface):
         loss = 0.0
         
         for n, p in self.named_parameters():
-            if n in self._means and n in self._fisher:
-                loss += torch.sum(self._fisher[n] * (p - self._means[n]) ** 2)
+            if n in self._theta_star and n in self._fisher:
+                loss += torch.sum(self._fisher[n] * (p - self._theta_star[n]) ** 2)
         return self.importance * loss
