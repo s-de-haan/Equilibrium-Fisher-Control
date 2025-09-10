@@ -212,8 +212,6 @@ class JacobianInterface:
                 r_ff_flat = r_ff_flat[:, self.task_masks[self.task_id]]
 
             gamma_i = self._compute_gamma(self.layers[l], l)
-            if self.setting == "taskIL" and l == len(self.layers) - 1:
-                gamma_i = gamma_i[:, self.task_masks[self.task_id]]
             gamma_list.append(gamma_i)
             gamma_flat = gamma_i.view(self.bzs, -1) if not self._first_task else 0.0
 
@@ -317,7 +315,30 @@ class FisherInterface:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
 
-    @torch.no_grad()
+        for task_id in range(self.num_tasks):
+            task_weights_sum = self.layers[-1].weights.data[self.task_masks[task_id], :].sum().item()
+            print(f"Sum of last layer weights of task {task_id}: {task_weights_sum:.4f}")
+
+    # @torch.no_grad()
+    # def _compute_gamma(self, layer, i):
+    #     if self._first_task:
+    #         return torch.zeros((self.bzs, layer.weights.shape[0]))
+        
+    #     F_weights = self._fisher[f'layers.{i}._weights']
+    #     F_bias = self._fisher[f'layers.{i}._bias']
+        
+    #     weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
+    #     bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
+        
+    #     # Gamma: batched, activity-dependent for weights
+    #     gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+        
+    #     # Fisher norm: per-output, no activity or batch sum
+    #     fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
+    #     fisher_norm = torch.sqrt(fisher_norm)
+        
+    #     return - self.beta * gamma / fisher_norm
+    
     def _compute_gamma(self, layer, i):
         if self._first_task:
             return torch.zeros((self.bzs, layer.weights.shape[0]))
@@ -328,15 +349,21 @@ class FisherInterface:
         weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
         bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
         
-        # Gamma: batched, activity-dependent for weights
         gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+
+        print("Gamma", i)
+        if self.setting == "taskIL" and i == len(self.layers) - 1:
+            fisher_norm = torch.sum(F_weights[self.task_masks[self.task_id], :] ** 2, dim=1) + (F_bias[self.task_masks[self.task_id]] ** 2) + 1e-8
+            gamma = gamma[:, self.task_masks[self.task_id]]
+            print(gamma.shape)
+        else:
+            fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
+            print("Nope", i)
         
-        # Fisher norm: per-output, no activity or batch sum
-        fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
         fisher_norm = torch.sqrt(fisher_norm)
+        gamma = -self.beta * gamma / fisher_norm
         
-        return - self.beta * gamma / fisher_norm
-    
+        return gamma
 
     def _compute_fisher_gamma_conv(self, layer, i):
         """
