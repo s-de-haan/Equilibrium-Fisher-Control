@@ -15,27 +15,40 @@ class Network(nn.Module):
         self.name = name
         self.setting = config.setting
         
-        # Task IL setup: precompute task masks
-        if self.setting == "taskIL":
-            self.num_tasks = getattr(config, 'num_tasks', 5)
-            self.classes_per_task = getattr(config, 'classes_per_task', 2)
-            self._setup_task_masks()
+        # Setup task masks for continual learning
+        self.num_tasks = getattr(config, 'num_tasks', 5)
+        self.classes_per_task = getattr(config, 'classes_per_task', 2)
+        self._setup_task_masks()
 
     def _setup_task_masks(self):
-        """Precompute task masks for efficient indexing."""
+        """Setup masks based on continual learning setting."""
         self.task_masks = {}
         self.task_masks_complement = {}
         
         for task_id in range(self.num_tasks):
-            start_idx = task_id * self.classes_per_task
-            end_idx = (task_id + 1) * self.classes_per_task
-            
-            # Mask for current task outputs
-            self.task_masks[task_id] = slice(start_idx, end_idx)
-            
-            # Mask for all other task outputs (for zeroing gradients)
-            complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
-            self.task_masks_complement[task_id] = complement_indices
+            if self.setting == "taskIL":
+                # Task IL: only current task's outputs
+                start_idx = task_id * self.classes_per_task
+                end_idx = (task_id + 1) * self.classes_per_task
+                self.task_masks[task_id] = slice(start_idx, end_idx)
+                
+                # Complement: all other tasks
+                complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
+                self.task_masks_complement[task_id] = complement_indices
+                
+            elif self.setting in ["classIL5task", "classIL2task"]:
+                # Class IL: all classes up to current task
+                end_idx = (task_id + 1) * self.classes_per_task
+                self.task_masks[task_id] = slice(0, end_idx)
+                
+                # Complement: future classes only
+                complement_indices = list(range(end_idx, self.num_tasks * self.classes_per_task))
+                self.task_masks_complement[task_id] = complement_indices
+                
+            else:  # domainIL
+                # Domain IL: all outputs (no masking)
+                self.task_masks[task_id] = slice(None)
+                self.task_masks_complement[task_id] = []
 
     @property
     def layer_sizes(self):
@@ -55,8 +68,7 @@ class Network(nn.Module):
         for layer in self.layers:
             x = layer(x)
 
-        if self.setting == "taskIL":
-            x = x[:, self.task_masks[self.task_id]]
+        x = x[:, self.task_masks[self.task_id]]
 
         self.y_hat = x
         return x
@@ -123,10 +135,6 @@ class JacobianInterface:
         for layer in self.layers:
             layer.backward()
 
-        # if self.setting == "taskIL": # freeze other heads
-        #     self.layers[-1].weights.grad[self.task_masks_complement[self.task_id], :].zero_()
-        #     self.layers[-1].bias.grad[self.task_masks_complement[self.task_id]].zero_()
-
     def _compute_error_mse(self, y_hat, y):
         return y - y_hat
 
@@ -152,8 +160,7 @@ class JacobianInterface:
             J = layer.compute_layerwise_jacobian()
             Js.append(J)
 
-        if self.setting == "taskIL":
-            Js[-1] = Js[-1][:, self.task_masks[self.task_id], :]
+        Js[-1] = Js[-1][:, self.task_masks[self.task_id], :]
 
         return Js
 
@@ -169,9 +176,7 @@ class JacobianInterface:
             activations_with_grad.append(x)
         
         y = activations_with_grad[-1]
-
-        if self.setting == "taskIL":
-            y = y[:, self.task_masks[self.task_id]]
+        y = y[:, self.task_masks[self.task_id]]
 
         out_dim = y.shape[1]
 
@@ -193,7 +198,7 @@ class JacobianInterface:
 
             # Collect the k-th row for each layer
             for l, r_i in enumerate(activations_with_grad):
-                if self.setting == "taskIL" and l == len(activations_with_grad) - 1:
+                if l == len(activations_with_grad) - 1:
                     grad_flat = r_i.grad[:, self.task_masks[self.task_id]].view(self.bzs, -1).clone()
                 else:
                     grad_flat = r_i.grad.view(self.bzs, -1).clone()
@@ -208,7 +213,7 @@ class JacobianInterface:
             J_list.append(Ji_flat)
 
             r_ff_flat = activations_with_grad[l].detach().view(self.bzs, -1)
-            if self.setting == "taskIL" and l == len(self.layers) - 1:
+            if l == len(self.layers) - 1:
                 r_ff_flat = r_ff_flat[:, self.task_masks[self.task_id]]
 
             gamma_i = self._compute_gamma(self.layers[l], l)
@@ -252,8 +257,10 @@ class JacobianInterface:
         # Derivatives per layer
         activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
         
-        # Last layer
-        psi = u * activations_derivatives[-1]
+        # Last layer - might have to expand u to full size
+        full_u = torch.zeros_like(activations_derivatives[-1])
+        full_u[:, self.task_masks[self.task_id]] = u
+        psi = full_u * activations_derivatives[-1]
         psi_list[-1] = psi
         
         # Backward from second-to-last to first
@@ -315,10 +322,6 @@ class FisherInterface:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
 
-        for task_id in range(self.num_tasks):
-            task_weights_sum = self.layers[-1].weights.data[self.task_masks[task_id], :].sum().item()
-            print(f"Sum of last layer weights of task {task_id}: {task_weights_sum:.4f}")
-
     # @torch.no_grad()
     # def _compute_gamma(self, layer, i):
     #     if self._first_task:
@@ -341,7 +344,7 @@ class FisherInterface:
     
     def _compute_gamma(self, layer, i):
         if self._first_task:
-            return torch.zeros((self.bzs, layer.weights.shape[0]))
+            return 0.0
         
         F_weights = self._fisher[f'layers.{i}._weights']
         F_bias = self._fisher[f'layers.{i}._bias']
@@ -351,14 +354,11 @@ class FisherInterface:
         
         gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
 
-        print("Gamma", i)
-        if self.setting == "taskIL" and i == len(self.layers) - 1:
+        if i == len(self.layers) - 1:
             fisher_norm = torch.sum(F_weights[self.task_masks[self.task_id], :] ** 2, dim=1) + (F_bias[self.task_masks[self.task_id]] ** 2) + 1e-8
             gamma = gamma[:, self.task_masks[self.task_id]]
-            print(gamma.shape)
         else:
             fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
-            print("Nope", i)
         
         fisher_norm = torch.sqrt(fisher_norm)
         gamma = -self.beta * gamma / fisher_norm

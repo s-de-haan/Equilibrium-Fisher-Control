@@ -186,16 +186,26 @@ class MetricConsolePrinterCallback(TrainingCallback):
         epoch = kwargs.pop("epoch", None)
         if logger is not None:
             epoch_train_loss = logs.epoch_train_loss
-            epoch_test_loss = logs.epoch_test_loss
-            accuracy = logs.accuracy
-            if epoch_test_loss is not None:
+        
+            if training_config.setting in ["classIL5task", "classIL2task"]:
+                task_losses = logs.get('task_losses', [])
+                task_accuracies = logs.get('task_accuracies', [])
+                cumulative_accuracy = logs.get('cumulative_accuracy', 0.0)
+                
+                loss_str = ", ".join([f"T{i}: {loss:.4f}" for i, loss in enumerate(task_losses)])
+                acc_str = ", ".join([f"T{i}: {acc:.2f}" for i, acc in enumerate(task_accuracies)])
+                
                 self.logger.info(
-                    f"\t\t\t\tEpoch: {epoch:03}, Train loss: {np.round(epoch_train_loss, 4):.4f} & test loss: {np.round(epoch_test_loss, 4):.4f} & accuracy: {np.round(accuracy,2):.2f}"
+                    f"\t\t\t\tEpoch: {epoch:03}, Train loss: {epoch_train_loss:.4f} & test losses: {loss_str} & accuracy: {acc_str}, Full: {cumulative_accuracy:.2f}"
                 )
             else:
-                self.logger.info(
-                    f"\t\t\t\tEpoch: {epoch:03}, Train loss: {np.round(epoch_train_loss, 4):.4f}"
-                )
+                # Standard logging for other settings
+                epoch_test_loss = logs.epoch_test_loss
+                accuracy = logs.accuracy
+                if epoch_test_loss is not None:
+                    self.logger.info(
+                        f"\t\t\t\tEpoch: {epoch:03}, Train loss: {epoch_train_loss:.4f} & test loss: {epoch_test_loss:.4f} & accuracy: {accuracy:.2f}"
+                    )
 
 
 class ProgressBarCallback(TrainingCallback):

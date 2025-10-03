@@ -14,9 +14,9 @@ from src.utils import str2bool
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
     # Network architecture & training hyperparameters:
-    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 2],
+    parser.add_argument("--layers", type=int, nargs='+', default=[784, 400, 400, 10],
                         help="Network layer sizes (e.g., 784 400 400 2)")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--mode", type=str, default="ndi", choices=["ndi", "di"],
@@ -36,8 +36,8 @@ def parse_args():
     
     # EFC-specific hyperparameters:
     parser.add_argument("--clamp", type=str2bool, default="false", help="Whether to clamp")
-    parser.add_argument("--beta_efc", type=float, default=5.0, help="Beta parameter for EFC")
-    parser.add_argument("--target_lr", type=float, default=1e-2, help="Target learning rate for EFC")
+    parser.add_argument("--beta_efc", type=float, default=1.0, help="Beta parameter for EFC")
+    parser.add_argument("--target_lr", type=float, default=1e-1, help="Target learning rate for EFC")
     parser.add_argument("--alpha_di", type=float, default=1e-4, help="Alpha for dynamic inversion")
     parser.add_argument("--alpha_I", type=float, default=1e-4, help="Alpha for nondynamic inversion")
     parser.add_argument("--tau", type=float, default=0.008, help="tau parameter")
@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument("--eps", type=float, default=1e-4, help="Epsilon for convergence check") 
     parser.add_argument("--dataset", type=str, default="MNIST", choices=["MNIST", "CIFAR10"], help="Dataset to use")
     parser.add_argument("--flatten_imgs", type=str, default="default", choices=["default", "True", "False"], help="Whether to use stability gap")
-    parser.add_argument("--setting", type=str, default="domainIL", choices=["domainIL", "taskIL", "classIL"], help="Setting to use")
+    parser.add_argument("--setting", type=str, default="taskIL", choices=["domainIL", "taskIL", "classIL"], help="Setting to use")
     parser.add_argument("--run_name", type=str, default="default", help="Run name for wandb")
     parser.add_argument("--fisher_normalization", type=str2bool, default="false", help="Whether to normalize the Fisher matrix")
     parser.add_argument("--stability_gap", type=str2bool, default="false", help="Whether to compute stability gap")

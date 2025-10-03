@@ -34,8 +34,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         for i, layer in enumerate(self.layers):
             # (Qu*_i + γ_i) ⊙ r^-_i + J_{i,i-1} * Δr_{i-1} where J_{i,i-1} = φ'(W_i * r^-_{i-1}) ⊙ W_i
             # This is equivalent to φ'(pre_activation) ⊙ (W_i @ Δr_{i-1})
-            if self.setting == "taskIL" and i == len(self.layers) - 1:
-                # For final layer in Task IL, only update current task's activations
+            if i == len(self.layers) - 1:  # Only update current task's activations
                 delta_r_i = torch.zeros_like(layer.r_ff)
                 task_slice = self.task_masks[self.task_id]
                 delta_r_i[:, task_slice] = (Qu_i[i] + gamma_i[i]) * layer.r_ff[:, task_slice] + torch.matmul(Js[i], delta_r_prev.unsqueeze(-1)).squeeze(-1)
@@ -52,8 +51,14 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         u_current = torch.zeros((self.bzs, self.output_size))
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool)
 
-        for t in range(self.tmax):
-            error = self._compute_error(self.layers[-1].r, self.targets)
+        t=0
+
+        while converged_mask.float().mean().item() <= 0.95 and t < self.tmax:
+            t = t + 1
+            # Stop if converged
+            if converged_mask.all():
+                break
+            error = self._compute_error(self.layers[-1].r[:, self.task_masks[self.task_id]], self.targets)
             
             # Proportional control
             u_next = self.k_p * error
@@ -62,8 +67,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
                 layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                layer.r_ff = layer.activation_fn(layer.v_ff)
+                layer.r_ff = layer.forward(layer.r_prev)
 
                 # Apical with teaching signal and Fisher modulation
                 psi = psis[i]
@@ -71,13 +75,25 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
                     scaling_factor = torch.abs(psi).mean()
                     gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
-                e_psi_gamma = torch.tanh(psi + gamma) + 1
 
                 # Soma with modulation
-                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff - layer.r)
+                if i == len(self.layers) - 1:  # For final layer, only update current task neurons
+                    task_slice = self.task_masks[self.task_id]
+                    psi_task = psi[:, task_slice]
+                    e_psi_gamma = torch.tanh(psi_task + gamma) + 1
+                    
+                    delta_r = self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff[:, task_slice] - layer.r[:, task_slice])
+                    layer.r[:, task_slice] = layer.r[:, task_slice] + delta_r
+                else:
+                    e_psi_gamma = torch.tanh(psi + gamma) + 1
+                    layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi_gamma * layer.r_ff - layer.r)
 
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            if converged_mask.all() and t > 10:
-                break
             u_current = u_next
+            
+        mask = ~converged_mask
+        if mask.any():
+            for i, layer in enumerate(self.layers):
+                layer.r[mask] = layer.r_ff[mask]
+            # print(t, f"Not converged samples: {(mask).sum().item()}")
