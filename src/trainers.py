@@ -1,3 +1,4 @@
+import copy
 import datetime
 import json
 import torch
@@ -277,6 +278,12 @@ class TrainerCL(TrainerInterface):
         super().__init__(model, config, callbacks)
         self.tasks_dataloaders = tasks_dataloaders
 
+        # Peak model tracking
+        self.use_peak = config.get('peak', False)
+        self.best_cumulative_accuracy = -float('inf')
+        self.best_model_state = None
+        self.peak_epoch = 0
+
     def train(self):
         self.callback_handler.on_train_begin(training_config=self.config)
         metrics = dotdict()
@@ -295,6 +302,12 @@ class TrainerCL(TrainerInterface):
 
             if task_id == 0:
                 self.test_loader_first_task = test_loader
+
+            # Reset peak tracking for current task
+            if self.use_peak and task_id > 0:
+                self.best_cumulative_accuracy = -float('inf')
+                self.best_model_state = None
+                self.peak_epoch = 0
 
             for epoch in range(1, self.config.epochs + 1):
                 self.callback_handler.on_epoch_begin(
@@ -315,7 +328,15 @@ class TrainerCL(TrainerInterface):
                         task_accuracies = getattr(self, 'current_task_accuracies', [])
                         metrics.task_losses = task_losses
                         metrics.task_accuracies = task_accuracies
-                        metrics.cumulative_accuracy = accuracy  # Add this line
+                        metrics.cumulative_accuracy = accuracy
+
+                        # Track peak model for class-IL settings (after first task)
+                        if self.use_peak and task_id > 0:
+                            if accuracy > self.best_cumulative_accuracy:
+                                self.best_cumulative_accuracy = accuracy
+                                self.best_model_state = copy.deepcopy(self.model.state_dict())
+                                self.peak_epoch = epoch
+                                logger.info(f"New peak model saved at epoch {epoch} with cumulative accuracy: {accuracy:.2f}%")
                     else:
                         epoch_test_loss, accuracy = self._test_step(epoch, task_id)
 
@@ -329,6 +350,11 @@ class TrainerCL(TrainerInterface):
                     logger=logger,
                     epoch=epoch,
                 )
+
+            # Restore peak model before completing task (if applicable)
+            if self.use_peak and task_id > 0 and self.best_model_state is not None:
+                logger.info(f"Restoring peak model from epoch {self.peak_epoch} with cumulative accuracy {self.best_cumulative_accuracy:.2f}%")
+                self.model.load_state_dict(self.best_model_state)
 
             # Test on all seen tasks
             self._test_seen_tasks(task_id)
@@ -378,10 +404,7 @@ class TrainerCL(TrainerInterface):
             return super()._test_step(epoch, task_id)
 
     def _test_step_classil(self, epoch, current_task_id):
-        # Test on cumulative data (existing logic)  
         cumulative_loss, cumulative_accuracy = super()._test_step(epoch, current_task_id)
-        
-        # Test on individual tasks and store in instance variables
         self.current_task_losses, self.current_task_accuracies = self._test_individual_tasks_classil(current_task_id)
         
         return cumulative_loss, cumulative_accuracy

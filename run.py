@@ -4,7 +4,7 @@ from networks.BP_network import *
 from networks.EWC_network import *
 from networks.DFC_network import *
 from networks.EFC_network import *
-from src.datasets import *
+from src.dataloaders import *
 from src.trainers import Trainer
 from src.utils import dotdict
 
@@ -21,7 +21,7 @@ def main():
         "loss_fn": "ce",
         "optimizer": "Adam",
         "scheduler": "CosineAnnealingLR",
-        "device": "cuda:2",
+        "device": "cpu",
         "output_dir": "./outputs",
         "seed": 1337,
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
