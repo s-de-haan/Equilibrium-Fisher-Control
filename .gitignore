@@ -4,6 +4,8 @@
 /outputs
 outputs
 
+*.slurm
+
 /wandb/*
 /wandb/
 /wandb
