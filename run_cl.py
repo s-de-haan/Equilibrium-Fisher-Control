@@ -24,7 +24,7 @@ def main():
         "alpha_di": 0.0017,
         "alpha_I": 0.0017,
         "tau": 0.032,
-        "dt_di": 0.03,
+        "dt_di": 0.02,
         "psi_lr": 0.1,
         "alpha_psi": 0.0,
         "time_constant_ratio": 0.2, # this param can be merged with dt_di
@@ -35,8 +35,8 @@ def main():
         "importance_ewc": 4.0, # ewc params
         "beta_efc": 0.1, # efc params
         "flatten_imgs": True,
-        "setting": "classIL5task", # domainIL, taskIL, classIL5task, classIL2task
-        "peak": True, # saves the peak model based on cumulative accuracy and restores it after each task
+        "setting": "classIL2task", # domainIL, taskIL, classIL5task, classIL2task
+        "peak": False, # saves the peak model based on cumulative accuracy and restores it after each task
     }
     
     config = dotdict(config)
@@ -72,7 +72,7 @@ def main():
         raise ValueError(f"Unknown setting: {config.setting}")
 
     # Train model
-    model = EFC_network(config=config)
+    model = DFC_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()

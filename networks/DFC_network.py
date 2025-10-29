@@ -70,7 +70,7 @@ class DFC_network(Network, JacobianInterface):
             if converged_mask.all():
                 break
 
-            error = self._compute_error(r_current[-1], self.targets)
+            error = self._compute_error(r_current[-1][:, self.task_masks[self.task_id]], self.targets)
             
             # Proportional and integral (PI) control.
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
@@ -87,11 +87,18 @@ class DFC_network(Network, JacobianInterface):
 
                 # Basal and apical
                 v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
+                v_fb_current[i] = torch.bmm(Js[i][:, self.task_masks[self.task_id], :].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
                 
                 # Soma with apical
                 tau = self.dt / self.time_constant_ratio
-                v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i])
+                if i == len(self.layers) - 1:
+                    task_slice = self.task_masks[self.task_id]
+                    v_update = torch.zeros_like(v_current[i])
+                    v_update[:, task_slice] = tau * (v_fb_current[i][:, task_slice] + v_ff_current[i][:, task_slice] - v_current[i][:, task_slice])
+                    v_current[i] += v_update
+                else:
+                    v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i])
+                
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.v_ff = v_current[i]
