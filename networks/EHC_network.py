@@ -2,8 +2,9 @@ import torch
 from networks.network_interface import *
 from networks.layers import BP_layer
 from networks.activation_function import ReLU, Linear
+from tqdm import tqdm
+import torch.autograd.functional as F
 
-from torch.autograd.functional import hessian
 
 class EHC_network(Network, FisherInterface):
     def __init__(self, config, name="EHC_network"):
@@ -43,14 +44,12 @@ class EHC_network(Network, FisherInterface):
                 self._hessian[n] += current_hessian[n]
 
     def _calculate_hessian(self, loader):
-        """
-        Compute the full average Hessian over the entire dataloader (no subsampling).
-        Returns a p x p float32 tensor.
-        """
         params = [p for p in self.parameters() if p.requires_grad]
         p = sum(param.numel() for param in params)
         H = torch.zeros(p, p, dtype=torch.float32, device=self.device)
         total_samples = 0
+
+        pbar = tqdm(total=len(loader), desc="Hessian", leave=False)
 
         for x, y in loader:
             x = x.to(self.device)
@@ -67,11 +66,12 @@ class EHC_network(Network, FisherInterface):
                 return self.loss_fn(out, y.argmax(dim=1)) / b
 
             params_flat = torch.cat([param.data.flatten() for param in params])
-            H_batch = hessian(loss_func, (params_flat,))[0][0]
+            H_batch = F.hessian(loss_func, (params_flat,))[0][0]
             H += H_batch * b
             total_samples += b
+            pbar.update(1)
 
+        pbar.close()
         if total_samples > 0:
             H /= total_samples
-
         return H
