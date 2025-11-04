@@ -96,4 +96,4 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         if mask.any():
             for i, layer in enumerate(self.layers):
                 layer.r[mask] = layer.r_ff[mask]
-            print(t, f"Not converged samples: {(mask).sum().item()}")
+            # print(t, f"Not converged samples: {(mask).sum().item()}")

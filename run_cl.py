@@ -53,7 +53,7 @@ def main():
         config.num_tasks = 5
         config.classes_per_task = 2
     elif config.setting == 'classIL2task':
-        config.layers = [784, 400, 400, 10]
+        config.layers = [784, 64, 64, 10]
         config.num_tasks = 2
         config.classes_per_task = 5
     else:
@@ -72,7 +72,7 @@ def main():
         raise ValueError(f"Unknown setting: {config.setting}")
 
     # Train model
-    model = DFC_network(config=config)
+    model = EFC_network(config=config)
 
     trainer = TrainerCL(model, tasks_dataloaders, config)
     trainer.train()
