@@ -63,7 +63,7 @@ class EHC_network(Network, FisherInterface):
                     param.data.copy_(params_flat[offset:offset + numel].view(param.shape))
                     offset += numel
                 out = self(x)
-                return self.loss_fn(out, y.argmax(dim=1)) / b
+                return self.loss_fn(out, y.argmax(dim=1), reduction='sum') / b
 
             params_flat = torch.cat([param.data.flatten() for param in params])
             H_batch = F.hessian(loss_func, (params_flat,))[0][0]
