@@ -1,14 +1,14 @@
 import torch
 from networks.network_interface import *
 from networks.layers import BP_layer
-from networks.activation_function import ReLU, Linear
+from networks.activation_function import ReLU, Linear, Softplus
 from tqdm import tqdm
 import torch.autograd.functional as F
 
 
 class EHC_network(Network, FisherInterface):
     def __init__(self, config, name="EHC_network"):
-        Network.__init__(self, BP_layer, ReLU, Linear, config, name)
+        Network.__init__(self, BP_layer, Softplus, Linear, config, name)
         FisherInterface.__init__(self)
         self.importance = config.importance_ewc
         self._theta_star = None
@@ -33,7 +33,7 @@ class EHC_network(Network, FisherInterface):
 
     def complete_task(self, dataloader):
         # Use your _calculate_hessian from FisherInterface
-        current_hessian = self._calculate_hessian(dataloader)
+        current_hessian = self._calculate_fisher(dataloader)
         self._theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
 
         if self._first_task:
@@ -43,35 +43,29 @@ class EHC_network(Network, FisherInterface):
             for n in self._hessian:
                 self._hessian[n] += current_hessian[n]
 
-    def _calculate_hessian(self, loader):
+    def _calculate_fisher(self, loader):
         params = [p for p in self.parameters() if p.requires_grad]
-        p = sum(param.numel() for param in params)
-        H = torch.zeros(p, p, dtype=torch.float32, device=self.device)
-        total_samples = 0
+        p = sum(par.numel() for par in params)
+        F = torch.zeros(p, p, dtype=torch.float32, device=self.device)
+        total = 0
 
-        pbar = tqdm(total=len(loader), desc="Hessian", leave=False)
+        self.eval()
+        pbar = tqdm(total=len(loader), desc="Fisher", leave=False)
 
         for x, y in loader:
-            x = x.to(self.device)
-            y = y.to(self.device)
+            x, y = x.to(self.device), y.to(self.device)
             b = x.size(0)
 
-            def loss_func(params_flat):
-                offset = 0
-                for param in params:
-                    numel = param.numel()
-                    param.data.copy_(params_flat[offset:offset + numel].view(param.shape))
-                    offset += numel
-                out = self(x)
-                return self.loss_fn(out, y.argmax(dim=1), reduction='sum') / b
+            self.zero_grad()
+            out = self(x)
+            loss = self.loss_fn(out, y)
+            loss.backward()
 
-            params_flat = torch.cat([param.data.flatten() for param in params])
-            H_batch = F.hessian(loss_func, (params_flat,))[0][0]
-            H += H_batch * b
-            total_samples += b
+            grads = torch.cat([p.grad.flatten() for p in params])
+            F += torch.outer(grads, grads) * (b ** 2)
+            total += b
             pbar.update(1)
-
+            
         pbar.close()
-        if total_samples > 0:
-            H /= total_samples
-        return H
+        F /= total
+        return F

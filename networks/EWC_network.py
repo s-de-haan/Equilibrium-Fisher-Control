@@ -2,11 +2,11 @@ import torch
 
 from networks.network_interface import *
 from networks.layers import BP_layer
-from networks.activation_function import ReLU, Linear
+from networks.activation_function import ReLU, Linear, Softplus
         
 class EWC_network(Network, FisherInterface):
     def __init__(self, config, name="EWC_network"):
-        Network.__init__(self, BP_layer, ReLU, Linear, config, name)
+        Network.__init__(self, BP_layer, Softplus, Linear, config, name)
         FisherInterface.__init__(self)
 
         self.importance = config.importance_ewc
