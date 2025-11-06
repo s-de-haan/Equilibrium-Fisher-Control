@@ -16,9 +16,9 @@ class Network(nn.Module):
         self.setting = config.setting
         
         # Setup task masks for continual learning
-        self.num_tasks = getattr(config, 'num_tasks', 5)
+        """self.num_tasks = getattr(config, 'num_tasks', 5)
         self.classes_per_task = getattr(config, 'classes_per_task', 2)
-        self._setup_task_masks()
+        self._setup_task_masks()"""
 
     def _setup_task_masks(self):
         """Setup masks based on continual learning setting."""
@@ -68,7 +68,7 @@ class Network(nn.Module):
         for layer in self.layers:
             x = layer(x)
 
-        x = x[:, self.task_masks[self.task_id]]
+        #x = x[:, self.task_masks[self.task_id]]
 
         self.y_hat = x
         return x
@@ -124,7 +124,7 @@ class JacobianInterface:
         self.tau = config.tau
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
-        self.alpha_I = float(config.alpha_I)
+        #self.alpha_I = float(config.alpha_I)
 
         assert self.alpha > 0
 
@@ -229,25 +229,51 @@ class JacobianInterface:
 
         return J_eff, gamma_eff, J_list, gamma_list
 
-    def _calculate_full_jacobian(self):
-        Js = [None] * len(self.layers)
+    def _calculate_full_jacobian(self, input: bool = False):
+        """
+        Compute the full Jacobian across all layers.
+    
+        Args:
+            input (bool): If True, also compute the Jacobian w.r.t. the input layer.
+                          Default is False (start from first hidden layer).
+    
+        Returns:
+            full_J (torch.Tensor): concatenated Jacobians of shape (batch_size, output_size, total_neurons)
+            Js (list[torch.Tensor]): list of per-layer Jacobians (and optionally input layer)
+        """
+        num_layers = len(self.layers)
+        Js = [None] * num_layers
         output_size = self.layer_sizes[-1]
-
+    
         activations_derivatives = [
             layer.activation_derivative(layer.v_ff)
             for layer in self.layers
         ]
-
-        # Last layer
-        Js[-1] = activations_derivatives[-1].view(self.bzs, output_size, 1) * torch.eye(output_size)
-
-        # Rest of the layers
-        for i in range(len(self.layers) - 2, -1, -1):
-            Js[i] = activations_derivatives[i].unsqueeze(1) * torch.matmul(
-                Js[i+1], self.layers[i + 1].weights
+    
+        # --- Last layer ---
+        Js[-1] = activations_derivatives[-1].view(self.bzs, output_size, 1) * torch.eye(
+            output_size, device=self.layers[-1].weights.device
+        )
+    
+        # --- Propagate backward through layers ---
+        for i in range(num_layers - 2, -1, -1):
+            Js[i] = (
+                activations_derivatives[i].unsqueeze(1)
+                * torch.matmul(Js[i + 1], self.layers[i + 1].weights)
             )
+    
+        # --- Optionally include Jacobian wrt input layer ---
+        if input:
+            # Compute derivative of first hidden layer wrt input
+            first_layer = self.layers[0]
+            act_deriv_in = first_layer.activation_derivative(first_layer.v_ff)
+            J_input = act_deriv_in.unsqueeze(1) * first_layer.weights  # (batch, hidden_size, input_size)
+            Js = [J_input] + Js  # prepend to list
+    
+        # Concatenate along feature dimension
+        full_J = torch.cat(Js, dim=2)
+        return full_J, Js
 
-        return torch.cat(Js, dim=2), Js
     
     @torch.no_grad()
     def _calculate_psis(self, u):

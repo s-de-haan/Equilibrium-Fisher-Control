@@ -198,7 +198,7 @@ class TrainerInterface:
     
     
     @torch.no_grad()
-    def _test_step(self, epoch, task_id):
+    def _test_step(self, epoch):
         self.callback_handler.on_test_step_begin(
             training_config=self.config,
             test_loader=self.test_loader,
@@ -209,8 +209,8 @@ class TrainerInterface:
         total = 0
         correct = 0
 
-        if self.setting == "taskIL":
-            self.model.task_id = task_id
+        """if self.setting == "taskIL":
+            self.model.task_id = task_id"""
 
         for X, y in self.test_loader:
             X = X.to(self.device)
