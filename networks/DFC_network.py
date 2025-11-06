@@ -8,7 +8,14 @@ check_nan = lambda x: torch.isnan(x).any().item()
 
 class DFC_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_network") -> None:
-        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
+        if "activation_fun" in config:
+            if config["activation_fun"]=="Tanh":
+                act_fun = Tanh
+            else:
+                act_fun = ReLU
+        else:
+            act_fun = ReLU
+        Network.__init__(self, DFC_layer, act_fun, Linear, config, name)
         JacobianInterface.__init__(self, config)
 
     @torch.no_grad()
