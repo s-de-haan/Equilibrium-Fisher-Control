@@ -59,7 +59,6 @@ class MNIST:
                 self.config.seed
             ),
             num_workers=self.config.num_workers,
-            pin_memory=True,
             shuffle=True,
         )
 
@@ -70,7 +69,6 @@ class MNIST:
                 self.config.seed
             ),
             num_workers=self.config.num_workers,
-            pin_memory=True,
             shuffle=False,
         )
         return train_loader, test_loader
@@ -262,7 +260,6 @@ class BaseContinualDataloader:
             batch_size=self.batch_size,
             generator=generator.manual_seed(self.config.seed),
             num_workers=self.config.num_workers,
-            pin_memory=True,
             shuffle=shuffle,
         )
 

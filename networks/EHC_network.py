@@ -33,7 +33,7 @@ class EHC_network(Network, FisherInterface):
 
     def complete_task(self, dataloader):
         # Use your _calculate_hessian from FisherInterface
-        current_hessian = self._calculate_fisher(dataloader)
+        current_hessian = self._calculate_full_fisher(dataloader)
         self._theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
 
         if self._first_task:
@@ -43,7 +43,7 @@ class EHC_network(Network, FisherInterface):
             for n in self._hessian:
                 self._hessian[n] += current_hessian[n]
 
-    def _calculate_fisher(self, loader):
+    def _calculate_full_fisher(self, loader):
         params = [p for p in self.parameters() if p.requires_grad]
         p = sum(par.numel() for par in params)
         F = torch.zeros(p, p, dtype=torch.float32, device=self.device)
