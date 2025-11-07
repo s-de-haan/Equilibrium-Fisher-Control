@@ -58,26 +58,33 @@ class TrainerInterface:
         self.callback_handler.on_save(self.config)
 
     def _setup_logger(self):
-        # Create a logger
+        # Create (or get) the root logger
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
 
-        # Create file handler which logs even debug messages
+        # Clear existing handlers to avoid double-printing
+        if logger.hasHandlers():
+            for h in logger.handlers[:]:
+                logger.removeHandler(h)
+                h.close()
+
+        # Create file handler
         fh = logging.FileHandler(os.path.join(self.training_dir, "training.log"))
         fh.setLevel(logging.INFO)
 
-        # Create console handler with a higher log level
+        # Create console handler
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
 
-        # Create formatter and add it to the handlers
+        # Formatter
         formatter = logging.Formatter("%(message)s")
         fh.setFormatter(formatter)
         ch.setFormatter(formatter)
 
-        # Add the handlers to the logger
+        # Add handlers
         logger.addHandler(fh)
         logger.addHandler(ch)
+
 
     def _prepare_training(self):
         self._set_seed(self.config.seed)

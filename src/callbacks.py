@@ -225,6 +225,7 @@ class ProgressBarCallback(TrainingCallback):
                 total=len(train_loader),
                 unit="batch",
                 desc=f"Training epoch {epoch:03}/{training_config.epochs}",
+                leave=False
             )
 
     def on_test_step_begin(self, training_config, **kwargs):
@@ -235,6 +236,7 @@ class ProgressBarCallback(TrainingCallback):
                 total=len(test_loader),
                 unit="batch",
                 desc=f"Testing  epoch {epoch:03}/{training_config.epochs}",
+                leave=False
             )
 
     def on_train_step_end(self, training_config, **kwargs):
@@ -245,9 +247,11 @@ class ProgressBarCallback(TrainingCallback):
         if self.test_progress_bar is not None:
             self.test_progress_bar.update(1)
 
-    def on_epoch_end(self, training_config, **kwags):
+    def on_epoch_end(self, training_config, **kwargs):
         if self.train_progress_bar is not None:
             self.train_progress_bar.close()
-
+            self.train_progress_bar = None
+    
         if self.test_progress_bar is not None:
             self.test_progress_bar.close()
+            self.test_progress_bar = None
