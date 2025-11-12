@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
+from torch.func import functional_call, vmap, grad
 
 from networks.layers import *
 
@@ -278,36 +280,51 @@ class FisherInterface:
         self._first_task = True
         
     def _calculate_fisher(self, dataloader):
-        """Compute Fisher Information Matrix across entire dataset"""
+        """Compute diagonal Fisher Information Matrix"""
         fisher = {}
         for n, p in self.named_parameters():
             if p.requires_grad:
                 fisher[n] = torch.zeros_like(p)
 
+        # Get parameters as a dictionary for functional_call
+        params = {n: p for n, p in self.named_parameters() if p.requires_grad}
+        buffers = {n: b for n, b in self.named_buffers()}
+        
+        def compute_loss_single(params, buffers, x, y):
+            """Compute log likelihood for a single sample"""
+            output = functional_call(self, (params, buffers), (x.unsqueeze(0),))
+            log_probs = F.log_softmax(output, dim=1)
+            log_likelihood = (log_probs * y.unsqueeze(0)).sum()
+            return log_likelihood
+        
+        # Create gradient function and vectorize it
+        grad_fn = grad(compute_loss_single)
+        grad_fn_vmap = vmap(grad_fn, in_dims=(None, None, 0, 0))
+        
         self.eval()
-
+        total_samples = 0
+        pbar = tqdm(total=len(dataloader), desc="Fisher", leave=True)
+        
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
-            # Log likelihood computation
-            outputs = self(inputs)
-            log_probs = F.log_softmax(outputs, dim=1)
-
-            # Can also calculate log likelihood with targets possibly TODO double check what to use
-            log_likelihood = (log_probs * targets).sum(dim=1)
+            batch_size = inputs.size(0)
             
-            # Compute gradients
-            self.zero_grad()
-            log_likelihood.sum().backward()
-
+            # Compute per-sample gradients (parallelized across batch)
+            per_sample_grads = grad_fn_vmap(params, buffers, inputs, targets)
+            
             # Accumulate squared gradients
-            for n, p in self.named_parameters():
-                if p.requires_grad and p.grad is not None:
-                    fisher[n].data += p.grad.data ** 2
-
+            for n in fisher.keys():
+                fisher[n].data += (per_sample_grads[n] ** 2).sum(dim=0)
+            
+            total_samples += batch_size
+            pbar.update(1)
+        
+        pbar.close()
+        
         # Normalize
         for n in fisher.keys():
-            fisher[n] /= len(dataloader.dataset)
-            
+            fisher[n] /= total_samples
+        
         return fisher
 
     def complete_task(self, dataloader):

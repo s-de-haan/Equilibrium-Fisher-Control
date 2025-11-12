@@ -4,6 +4,7 @@ from networks.layers import BP_layer
 from networks.activation_function import ReLU, Linear, Softplus
 from tqdm import tqdm
 import torch.autograd.functional as F
+from torch.func import functional_call, vmap, grad
 
 
 class EHC_network(Network, FisherInterface):
@@ -43,29 +44,55 @@ class EHC_network(Network, FisherInterface):
             for n in self._hessian:
                 self._hessian[n] += current_hessian[n]
 
-    def _calculate_full_fisher(self, loader):
-        params = [p for p in self.parameters() if p.requires_grad]
-        p = sum(par.numel() for par in params)
-        F = torch.zeros(p, p, dtype=torch.float32, device=self.device)
-        total = 0
-
+    def _calculate_full_fisher(self, dataloader):
+        """Compute full Fisher Information Matrix"""    
+        # Get flattened parameters
+        params_dict = {n: p for n, p in self.named_parameters() if p.requires_grad}
+        buffers = {n: b for n, b in self.named_buffers()}
+        
+        # Count total parameters
+        param_count = sum(p.numel() for p in params_dict.values())
+        fisher = torch.zeros(param_count, param_count, dtype=torch.float32, device=self.device)
+        
+        def compute_loss_single(params, buffers, x, y):
+            """Compute log likelihood for a single sample"""
+            output = functional_call(self, (params, buffers), (x.unsqueeze(0),))
+            log_probs = F.log_softmax(output, dim=1)
+            log_likelihood = (log_probs * y.unsqueeze(0)).sum()
+            return log_likelihood
+        
+        # Create gradient function and vectorize it
+        grad_fn = grad(compute_loss_single)
+        grad_fn_vmap = vmap(grad_fn, in_dims=(None, None, 0, 0))
+        
         self.eval()
-        pbar = tqdm(total=len(loader), desc="Fisher", leave=False)
-
-        for x, y in loader:
-            x, y = x.to(self.device), y.to(self.device)
-            b = x.size(0)
-
-            self.zero_grad()
-            out = self(x)
-            loss = self.loss_fn(out, y)
-            loss.backward()
-
-            grads = torch.cat([p.grad.flatten() for p in params])
-            F += torch.outer(grads, grads) * (b ** 2)
-            total += b
-            pbar.update(1)
+        total_samples = 0
+        pbar = tqdm(total=len(dataloader), desc="Hessian", leave=True)
+        
+        for inputs, targets in dataloader:
+            inputs, targets = inputs.to(self.device), targets.to(self.device)
+            batch_size = inputs.size(0)
             
+            # Compute per-sample gradients (parallelized across batch)
+            per_sample_grads = grad_fn_vmap(params_dict, buffers, inputs, targets)
+            
+            # Flatten gradients for each sample
+            # per_sample_grads is a dict with shape [batch_size, ...] for each param
+            grads_flat = torch.stack([
+                torch.cat([per_sample_grads[n][i].flatten() 
+                        for n in params_dict.keys()])
+                for i in range(batch_size)
+            ])  # Shape: [batch_size, param_count]
+            
+            # Accumulate outer products
+            fisher += torch.einsum('bi,bj->ij', grads_flat, grads_flat)
+            
+            total_samples += batch_size
+            pbar.update(1)
+        
         pbar.close()
-        F /= total
-        return F
+        
+        # Normalize
+        fisher /= total_samples
+        
+        return fisher
