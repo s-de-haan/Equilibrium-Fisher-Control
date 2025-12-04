@@ -13,7 +13,7 @@ def main():
     config = {
         "layers": [784, 400, 400, 10],
         "num_classes": 10,
-        "lr": 1e-6,
+        "lr": 1e-4,
         "batch_size": 256,
         "epochs": 20,
         "mode": "ndi",
@@ -27,6 +27,7 @@ def main():
         "taus": [0.02, 0.02, 0.02, 0.016, 0.01],
         "target_lr": 1e-2,       # Updated to optimal value
         "alpha_di": 0.0017,        # 1/tau for tau=0.2
+        "alpha_I": 0.0017,
         "dt_di": 0.02,         # Time step
         "time_constant_ratio": 0.2,  # tau
         "tmax_di": 500,
@@ -40,7 +41,7 @@ def main():
     train_loader, test_loader = MNIST(config=config).get_dataloaders()
 
     # Train model
-    model = EFC_network(config=config)
+    model = DFC_network(config=config)
 
     trainer = Trainer(model, train_loader, test_loader, config)
     trainer.train()
