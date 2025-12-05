@@ -4,6 +4,9 @@
 /outputs
 outputs
 
+figs/
+saved_stuff/
+
 *.slurm
 
 /wandb/*
