@@ -97,3 +97,107 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
             for i, layer in enumerate(self.layers):
                 layer.r[mask] = layer.r_ff[mask]
             # print(t, f"Not converged samples: {(mask).sum().item()}")
+
+    # In EFC_network class
+    def _calculate_full_fisher(self, dataloader):
+        """Override to use gamma-modulated Fisher computation"""
+        return self._calculate_full_fisher_with_gamma(dataloader)
+
+    def _calculate_full_fisher_with_gamma(self, dataloader):
+        """Compute full Fisher Information Matrix with EFC gamma modulation (vectorized)"""
+        params_dict = {n: p for n, p in self.named_parameters() if p.requires_grad}
+        
+        param_count = sum(p.numel() for p in params_dict.values())
+        fisher = torch.zeros(param_count, param_count, dtype=torch.float32)
+        
+        # Capture EFC-specific quantities in closure
+        fisher_diag = self._fisher
+        theta_star = self._theta_star
+        beta = self.beta
+        n_layers = len(self.layers)
+        task_mask = self.task_masks[0]  # Task A mask (classes 0-4)
+        
+        def compute_loss_single_with_gamma(params, x, y):
+            """Compute log likelihood for a single sample with gamma modulation"""
+            h = x.flatten()
+            
+            for layer_idx in range(n_layers):
+                # Get params for this layer
+                W = params[f'layers.{layer_idx}._weights']
+                b = params[f'layers.{layer_idx}._bias']
+                
+                # Compute gamma
+                F_weights = fisher_diag[f'layers.{layer_idx}._weights']
+                F_bias = fisher_diag[f'layers.{layer_idx}._bias']
+                
+                weight_diff = W - theta_star[f'layers.{layer_idx}._weights']
+                bias_diff = b - theta_star[f'layers.{layer_idx}._bias']
+                
+                gamma = (h @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
+                
+                if layer_idx == n_layers - 1:
+                    fisher_norm = torch.sqrt(
+                        torch.sum(F_weights[task_mask, :] ** 2, dim=1) + 
+                        F_bias[task_mask] ** 2 + 1e-8
+                    )
+                    gamma = gamma[task_mask]
+                else:
+                    fisher_norm = torch.sqrt(
+                        torch.sum(F_weights ** 2, dim=1) + F_bias ** 2 + 1e-8
+                    )
+                
+                gamma = 0.0 #-beta * gamma / fisher_norm
+                
+                # Forward through layer
+                z = F.linear(h, W, b)
+                
+                # Apply Softplus activation and gamma modulation (tanh + 1)
+                if layer_idx < n_layers - 1:
+                    r_ff = F.softplus(z)
+                    h = r_ff * (torch.tanh(gamma) + 1)
+                else:
+                    # Final layer: apply modulation only to task-relevant outputs
+                    h = z.clone()
+                    modulation = torch.tanh(gamma) + 1
+                    h[task_mask] = z[task_mask] * modulation
+            
+            # Only use Task A outputs for Fisher
+            output = h[task_mask].unsqueeze(0)
+            log_probs = F.log_softmax(output, dim=1)
+            
+            # Target should also be restricted to Task A classes
+            y_task = y[task_mask]
+            log_likelihood = (log_probs * y_task.unsqueeze(0)).sum()
+            
+            return log_likelihood
+        
+        # Create gradient function and vectorize over batch dimension
+        grad_fn = grad(compute_loss_single_with_gamma)
+        grad_fn_vmap = vmap(grad_fn, in_dims=(None, 0, 0))
+        
+        self.eval()
+        total_samples = 0
+        pbar = tqdm(total=len(dataloader), desc="Fisher (EFC+γ)", leave=True)
+        
+        for inputs, targets in dataloader:
+            batch_size = inputs.size(0)
+            
+            # Compute per-sample gradients (parallelized across batch)
+            per_sample_grads = grad_fn_vmap(params_dict, inputs, targets)
+            
+            # Flatten gradients for each sample
+            grads_flat = torch.stack([
+                torch.cat([per_sample_grads[n][i].flatten() for n in params_dict.keys()])
+                for i in range(batch_size)
+            ])  # Shape: [batch_size, param_count]
+            
+            # Accumulate outer products
+            fisher += torch.einsum("bi,bj->ij", grads_flat, grads_flat)
+            
+            total_samples += batch_size
+            pbar.update(1)
+        
+        pbar.close()
+        fisher /= total_samples
+        
+        return fisher
