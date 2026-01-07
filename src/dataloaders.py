@@ -7,6 +7,10 @@ from PIL import Image
 import numpy as np
 from src.utils import str2bool
 
+from torchvision import models
+import torch.nn as nn
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
 
 class MNIST:
     def __init__(self, config):
@@ -152,6 +156,7 @@ class BaseContinualDataloader:
         self.device = config.get(
             "device", "cuda" if torch.cuda.is_available() else "cpu"
         )
+        self.use_cnn_encoder = config.use_cnn_encoder if "use_cnn_encoder" in config else False
 
         # Set flatten based on config and dataset
         if dataset_name == "MNIST":
@@ -163,7 +168,7 @@ class BaseContinualDataloader:
             self.in_channels = 1
             self.img_size = 28
             self.dataset_wrapper = MNISTDatasetWrapper
-        else:  # CIFAR10
+        elif dataset_name == "CIFAR10":  # CIFAR10
             self.flatten = (
                 False
                 if config.get("flatten_imgs") == "default"
@@ -176,10 +181,16 @@ class BaseContinualDataloader:
         # Set input channels for config
         config.in_channels = self.in_channels
 
+        if self.use_cnn_encoder:
+            self._setup_encoder()
+
         self._setup_transforms()
         self._load_datasets()
         self._define_tasks()
         self._precompute_task_indices()
+
+        # Print device info
+        print(f"DataLoader using device: {self.device}")
 
     def _setup_transforms(self):
         """Setup transforms based on dataset."""
@@ -212,24 +223,24 @@ class BaseContinualDataloader:
         self.tasks = [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9]]
 
     def _precompute_task_indices(self):
-        """Pre-compute indices for each task to avoid repeated filtering."""
         self.task_train_indices = {}
         self.task_test_indices = {}
         
+        # Convert to tensor once for lightning-fast filtering
+        train_targets = torch.as_tensor(self.train_dataset.targets)
+        test_targets = torch.as_tensor(self.test_dataset.targets)
+        
         for task_id in range(self.num_tasks):
-            task_classes = self.tasks[task_id]
+            task_classes = torch.tensor(self.tasks[task_id])
             
-            # Pre-filter train indices
-            self.task_train_indices[task_id] = [
-                i for i, target in enumerate(self.train_dataset.targets)
-                if target in task_classes
-            ]
+            # Vectorized comparison
+            self.task_train_indices[task_id] = torch.where(
+                torch.isin(train_targets, task_classes)
+            )[0].tolist()
             
-            # Pre-filter test indices  
-            self.task_test_indices[task_id] = [
-                i for i, target in enumerate(self.test_dataset.targets)
-                if target in task_classes
-            ]
+            self.task_test_indices[task_id] = torch.where(
+                torch.isin(test_targets, task_classes)
+            )[0].tolist()
 
     def _get_task_subset(self, is_train, task_id):
         """Get dataset subset for a specific task using pre-computed indices."""
@@ -264,15 +275,23 @@ class BaseContinualDataloader:
         )
 
     def _process_data(self, dataset, classes, target_mapping_fn):
-        """Process and extract data from filtered dataset."""
-        data = torch.stack([dataset[i][0] for i in range(len(dataset))])
-        targets = torch.tensor([target_mapping_fn(i) for i in range(len(dataset))])
-
-        # Flatten if required
+        """Process and extract data efficiently."""
+        if self.use_cnn_encoder:
+            # This already handles the DataLoader and GPU acceleration
+            embeddings, raw_targets = self._encode_dataset(dataset)
+            mapped_targets = torch.tensor([target_mapping_fn(t.item()) for t in raw_targets])
+            return embeddings, mapped_targets
+        
+        # Non-CNN path: Use a temporary DataLoader to fetch all data at once
+        dl = DataLoader(dataset, batch_size=len(dataset), shuffle=False, num_workers=self.config.num_workers)
+        data, targets = next(iter(dl))
+        
+        mapped_targets = torch.tensor([target_mapping_fn(t.item()) for t in targets])
+        
         if self.flatten:
             data = data.view(data.size(0), -1)
+        return data, mapped_targets
 
-        return data, targets
 
     def get_dataloaders(self, task_id):
         """Get dataloaders for a specific task - to be implemented by subclasses."""
@@ -281,6 +300,74 @@ class BaseContinualDataloader:
     def get_all_tasks_dataloaders(self):
         """Get dataloaders for all tasks."""
         return [self.get_dataloaders(task_id) for task_id in range(self.num_tasks)]
+
+
+    def _encode_dataset(self, subset):
+
+        # Create dataloader to batch the dataset
+        loader = DataLoader(
+            subset, 
+            batch_size=self.batch_size, 
+            shuffle=False, 
+            num_workers=self.config.num_workers, 
+            pin_memory=False
+        )
+        
+        embeddings = []
+        targets = []
+        
+        # Define these once outside the loop
+        # Use InterpolationMode.BICUBIC for better ResNet performance
+        resize = transforms.Resize((224, 224), interpolation=transforms.InterpolationMode.BICUBIC)
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+        self.encoder.eval()
+        with torch.inference_mode():
+            for x, y in loader:
+                x = x.to(self.device, non_blocking=True)
+                
+                if x.shape[1] == 1: # If grayscale, convert to 3 channels by repeating as ResNET expects RGB
+                    x = x.expand(-1, 3, -1, -1)
+                
+                # Perform preprocessing as defined in _setup_encoder for the ResNet encoder
+                x = self.encoder_gpu_transform(x)
+                
+                emb = self.encoder(x)
+                
+                # Move to CPU to prevent GPU memory overflow during accumulation
+                embeddings.append(emb.cpu())
+                targets.append(y.cpu())
+
+        # Concatenate all batches into single tensors. 
+        # Returns (N, 512) embeddings and (N,) targets where N is total dataset size.
+        return torch.cat(embeddings, dim=0), torch.cat(targets, dim=0)
+
+    def _setup_encoder(self):
+
+        if self.config.cnn_encoder == "resnet18":
+            encoder = models.resnet18(pretrained=self.config.cnn_pretrained)
+            out_dim = encoder.fc.in_features  #Get the input size of the final fully-connected layer 
+                                              #(512 for ResNet18). This is the embedding dimension.
+            encoder.fc = nn.Identity() # Replace the classification head with an identity function. 
+                                        # Now the network outputs the 512-dim feature vector instead of 
+                                        # 1000 ImageNet class logits
+            self.encoder_out_dim = out_dim
+
+        # move to device and freeze if desired
+        encoder = encoder.to(self.device).eval()
+        if self.config.encoder_freeze:
+            for p in encoder.parameters():
+                p.requires_grad = False
+        self.encoder = encoder
+
+        # Define preprocessing: 
+        self.encoder_gpu_transform = nn.Sequential(
+            transforms.Resize((224, 224), interpolation=transforms.InterpolationMode.BICUBIC),
+            transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
+        ).to(self.device)
+
+        self.flatten = True # Flag indicating outputs are already flat vectors (no need to flatten later).
+        self.config.in_channels = self.encoder_out_dim # sets the network's expected input dimension to 512  
 
 
 class DomainILDataloader(BaseContinualDataloader):
@@ -296,17 +383,13 @@ class DomainILDataloader(BaseContinualDataloader):
         train_data, train_targets = self._process_data(
             train_dataset,
             classes,
-            lambda i: classes.index(
-                self.train_dataset.targets[train_dataset.indices[i]].item()
-            ),
+            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
         )
 
         test_data, test_targets = self._process_data(
             test_dataset,
             classes,
-            lambda i: classes.index(
-                self.test_dataset.targets[test_dataset.indices[i]].item()
-            ),
+            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
         )
 
         # Create tensor datasets with binary one-hot encoding
@@ -338,17 +421,13 @@ class TaskILDataloader(BaseContinualDataloader):
         train_data, train_targets = self._process_data(
             train_dataset,
             classes,
-            lambda i: classes.index(
-                self.train_dataset.targets[train_dataset.indices[i]].item()
-            ),
+            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
         )
 
         test_data, test_targets = self._process_data(
             test_dataset,
             classes,
-            lambda i: classes.index(
-                self.test_dataset.targets[test_dataset.indices[i]].item()
-            ),
+            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
         )
 
         # Create tensor datasets with binary one-hot encoding
@@ -382,12 +461,12 @@ class ClassILDataloader(BaseContinualDataloader):
 
         train_data, train_targets = self._process_data(
             train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         test_data, test_targets = self._process_data(
             test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         train_tensor_dataset = TensorDataset(
@@ -424,12 +503,12 @@ class ClassIL5TaskDataloader(BaseContinualDataloader):
 
         train_data, train_targets = self._process_data(
             train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         test_data, test_targets = self._process_data(
             test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         train_tensor_dataset = TensorDataset(
@@ -474,12 +553,12 @@ class ClassIL2TaskDataloader(BaseContinualDataloader):
 
         train_data, train_targets = self._process_data(
             train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         test_data, test_targets = self._process_data(
             test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
 
         train_tensor_dataset = TensorDataset(
@@ -509,6 +588,13 @@ def ClassILMNIST5Task(config):
 def ClassILMNIST2Task(config):
     return ClassIL2TaskDataloader(config, "MNIST")
 
+
+### CIFAR10 with encoding enabled
+def ClassILCIFAR2Task(config):
+    return ClassIL2TaskDataloader(config, "CIFAR10")
+
+
+### OLD CIFAR
 def TaskILCIFAR10(config):
     return TaskILDataloader(config, "CIFAR10")
 
