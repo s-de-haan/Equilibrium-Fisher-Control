@@ -20,13 +20,17 @@ class Hess_network(Network, FisherInterface):
             return torch.tensor(0.0, device=self.device)
 
         v = torch.cat(
-            [
-                (p - self._theta_star[n]).flatten()
-                for n, p in self.named_parameters()
-                if p.requires_grad
-            ]
+            [(p - self._theta_star[n]).flatten()
+            for n, p in self.named_parameters() if p.requires_grad]
         )
-        quad = 0.5 * (v @ self._hessian @ v)
+        
+        # Detach Hessian and compute manually to avoid autograd overhead
+        with torch.no_grad():
+            Hv = self._hessian @ v 
+        
+        # Compute the quadratic form
+        quad = 0.5 * (v @ Hv)
+        
         return self.importance * quad
 
     def backward(self, y):
@@ -37,7 +41,7 @@ class Hess_network(Network, FisherInterface):
 
     def complete_task(self, dataloader):
         # Use your _calculate_hessian from FisherInterface
-        current_hessian = self._calculate_full_fisher(dataloader)
+        current_hessian = self._calculate_full_fisher(dataloader).detach()
         self._theta_star = {
             n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad
         }

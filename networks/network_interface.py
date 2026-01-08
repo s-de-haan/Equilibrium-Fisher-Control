@@ -395,6 +395,7 @@ class FisherInterface:
         else:
             for n in self._fisher:
                 self._fisher[n] += current_fisher[n]
+                # self._fisher[n] = torch.max(self._fisher[n], current_fisher[n].detach())
 
     # @torch.no_grad()
     # def _compute_gamma(self, layer, i):
