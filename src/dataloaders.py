@@ -486,10 +486,10 @@ class ClassIL2TaskDataloader(BaseContinualDataloader):
         )
 
         train_tensor_dataset = TensorDataset(
-            train_data.float(), self._one_hot_encode(train_targets, num_classes_so_far)
+            train_data.float(), self._one_hot_encode(train_targets, 10)
         )
         test_tensor_dataset = TensorDataset(
-            test_data.float(), self._one_hot_encode(test_targets, num_classes_so_far)
+            test_data.float(), self._one_hot_encode(test_targets, 10)
         )
 
         return (

@@ -208,7 +208,7 @@ class TrainerInterface:
     
     
     @torch.no_grad()
-    def _test_step(self, epoch):
+    def _test_step(self, epoch, task_id):
         self.callback_handler.on_test_step_begin(
             training_config=self.config,
             test_loader=self.test_loader,
@@ -219,8 +219,8 @@ class TrainerInterface:
         total = 0
         correct = 0
 
-        """if self.setting == "taskIL":
-            self.model.task_id = task_id"""
+        if self.setting == "taskIL":
+            self.model.task_id = task_id
 
         for X, y in self.test_loader:
             X = X.to(self.device)
@@ -352,20 +352,12 @@ class TrainerDFCL(Trainer):
 
                 if i==len(layers)-1:
                     r_i1 = torch.softmax(layer.r, dim=1).clone().detach()
-                    #r_i1 = layer.r.clone().detach()
-                    #r_i1 = (layer.r * y).clone().detach()
-                    #r_i1 = y.clone().detach()
                 else:
                     r_i1 = layer.r.clone().detach()
+
                 if i==0:
                     r_prev = self.model.input.clone().detach()
-                    #r_rec = (layer_fb(r_i1))
-                    #r_rec = torch.clamp(r_rec, 0, 1)
-                    #r_rec = torch.sigmoid(layer_fb(r_i1*(r_i1>0)))
                     r_rec = torch.sigmoid(layer_fb(r_i1))
-                    """r_prev = layer.r.clone().detach()
-                    r_int = torch.sigmoid(layer_fb(r_i1))
-                    r_rec = layer.activation_fn(layer(r_int))"""
                 else:
                     r_prev = layers[i-1].r.clone().detach()
                     r_rec = layers[i-1].activation_fn(layer_fb(r_i1))
@@ -644,6 +636,8 @@ class TrainerCL(TrainerInterface):
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
             self._set_optimizer()
+
+            break ###### DELETE THIS
             
         if self.save:
             self._save_model()
@@ -767,6 +761,103 @@ class TrainerCL(TrainerInterface):
             test_data.float(),
             self._one_hot_encode(test_targets, num_classes_so_far)
         )
+    
+
+class TrainerCL_DFC(TrainerCL):
+    """
+    Trainer for DFCL networks:
+      • Standard DFC training
+      • Additional reconstruction loss for feedback weights
+      • ONE optimizer for all lateral weights
+      • ONE optimizer for all feedback weights
+    """
+
+    def __init__(self, model, tasks_dataloaders, config, callbacks=None):
+        super().__init__(model, tasks_dataloaders, config, callbacks)
+
+        self.recon_loss_fn = torch.nn.MSELoss()
+
+        # ---- NEW: single optimizers for lateral and feedback ----
+        self._set_dfcl_optimizers()
+
+    # ------------------------------------------------------------------
+    # Create a single optimizer for all feedback weights
+    # ------------------------------------------------------------------
+    def _set_dfcl_optimizers(self):
+        lr = self.config.lr_fb  # or use config.lr_lat, config.lr_fb
+
+        self.opt_fb = torch.optim.AdamW(
+            self.model.feedback_layers.parameters(), lr=lr, betas=(0.9, 0.999), eps=5.832e-07
+        ) 
+
+        print("[TrainerDFCL] Created optimizers: feedforward, 1× feedback.")
+
+    # ------------------------------------------------------------------
+    # DFCL training step
+    # ------------------------------------------------------------------
+    def _train_step(self, epoch: int):
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        self.model.train()
+        epoch_loss = 0
+        layers = self.model.layers
+        self.model.converged_per_batch = []
+
+        for X, y in self.train_loader:
+            X, y = X.to(self.device), y.to(self.device)
+
+            # ============================
+            # 1. Standard DFC supervised loss
+            # ============================
+            y_hat = self.model(X)
+            primary_loss = self.model.calculate_loss(y_hat, y)
+
+
+            # ============================
+            # 2. DFCL reconstruction loss
+            # ============================
+            
+            # Feedback reconstruction
+            for i, layer in enumerate(layers):
+                
+                layer_fb = self.model.feedback_layers[i]
+
+                if i==len(layers)-1:
+                    r_i1 = torch.softmax(layer.r, dim=1).clone().detach()
+                else:
+                    r_i1 = layer.r.clone().detach()
+
+                if i==0:
+                    r_prev = self.model.input.clone().detach()
+                    r_rec = torch.sigmoid(layer_fb(r_i1))
+                else:
+                    r_prev = layers[i-1].r.clone().detach()
+                    r_rec = layers[i-1].activation_fn(layer_fb(r_i1))
+                
+                fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
+                self.opt_fb.zero_grad()
+                fb_recon_loss.backward()
+                self.opt_fb.step()
+
+            with torch.no_grad():
+                self.model.label = y
+                self.optimizer.zero_grad()
+                self.model.backward(y)
+                self.optimizer.step()  
+
+            
+
+
+            epoch_loss += primary_loss.item()
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        self.model.mean_convergence_per_epoch.append(np.array(self.model.converged_per_batch).mean())
+
+        return epoch_loss / len(self.train_loader)
 
 class WandBTrainerCL(TrainerCL):
     def __init__(self, model, tasks_dataloaders, config):
