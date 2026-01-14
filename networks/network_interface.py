@@ -14,6 +14,10 @@ class Network(nn.Module):
         self.lr = config.lr
         self.name = name
         self.setting = config.setting
+        self.train_loss_hist = []
+        self.test_loss_hist = []
+        self.test_acc_hist = []
+
         
         # Setup task masks for continual learning
         """self.num_tasks = getattr(config, 'num_tasks', 5)
@@ -125,6 +129,9 @@ class JacobianInterface:
         self.target_lr = float(config.target_lr)
         self.alpha = float(config.alpha_di)
         #self.alpha_I = float(config.alpha_I)
+        self.diff_epoch = []
+        self.diff = []
+        self.y = None
 
         assert self.alpha > 0
 
@@ -133,6 +140,8 @@ class JacobianInterface:
         self._inversion()
 
         for layer in self.layers:
+            if layer.out_features!=10:
+                self.diff_epoch.append((layer.r-layer.r_ff).abs().sum().cpu().numpy())
             layer.backward()
 
     def _compute_error_mse(self, y_hat, y):
@@ -150,6 +159,7 @@ class JacobianInterface:
         """ CE loss solution """
         self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
+        self.y = y
 
     def _calculate_layerwise_jacobians(self):
         """
