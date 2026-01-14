@@ -20,9 +20,9 @@ class Network(nn.Module):
 
         
         # Setup task masks for continual learning
-        """self.num_tasks = getattr(config, 'num_tasks', 5)
+        self.num_tasks = getattr(config, 'num_tasks', 5)
         self.classes_per_task = getattr(config, 'classes_per_task', 2)
-        self._setup_task_masks()"""
+        self._setup_task_masks()
 
     def _setup_task_masks(self):
         """Setup masks based on continual learning setting."""
