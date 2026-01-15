@@ -72,9 +72,9 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 # Apical with teaching signal and Fisher modulation
                 psi = psis[i]
                 gamma = self._compute_gamma(layer, i)
-                if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                    scaling_factor = torch.abs(psi).mean()
-                    gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                # if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
+                    # scaling_factor = torch.abs(psi).mean()
+                    # gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
 
                 # Soma with modulation
                 if i == len(self.layers) - 1:  # For final layer, only update current task neurons

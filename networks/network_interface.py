@@ -437,7 +437,7 @@ class FisherInterface:
         
         fisher_norm = torch.sqrt(fisher_norm)
         gamma = -self.beta * gamma / fisher_norm
-        
+
         return gamma
 
     def _compute_fisher_gamma_conv(self, layer, i):
