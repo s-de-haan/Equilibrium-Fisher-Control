@@ -308,33 +308,26 @@ class DFCL_network(Network, JacobianInterface):
 
     
     @torch.no_grad()
-    def generate_samples(self, target_activity, init_input, batch_size=10, tmax=500):
-        """
-        Generate samples by running DFC dynamics in reverse.
-        
-        Args:
-            model: trained DFC_network instance.
-            target_activity: desired target output (batch_size x output_size)
-            init_input: initial input tensor
-        
-        Returns:
-            generated_inputs: steady-state input representations that evoke the target activity.
-        """
-        # === Setup ===
-        self.targets = target_activity
-        bzs = batch_size
+    def generate_samples(self, target_activity, init_input, tmax=500, threshold=0.01):
 
-        # Initialize input 
-        self.input = init_input.to(self.device)
+        # === Setup ===
+        self.bzs = target_activity.shape[0]
+
+        init_input_scaled = init_input.to(self.device)*10 - (5)
+        input_pre = init_input_scaled
+        self.input = torch.sigmoid(input_pre)
 
         layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
 
-        v_fb_current = [torch.zeros((bzs, lod), device=self.device) for lod in layer_out_dims]
-        v_ff_current = [torch.zeros((bzs, lod), device=self.device) for lod in layer_out_dims]
-        v_current = [torch.zeros((bzs, lod), device=self.device) for lod in layer_out_dims]
-        r_current = [torch.zeros((bzs, lod), device=self.device) for lod in layer_out_dims]
-        u_current = torch.zeros((bzs, self.layer_sizes[-1]), device=self.device)
+        v_fb_current = [torch.zeros((self.bzs, lod), device=self.device) for lod in layer_out_dims]
+        v_ff_current = [torch.zeros((self.bzs, lod), device=self.device) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod), device=self.device) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod), device=self.device) for lod in layer_out_dims]
+        u_current = torch.zeros((self.bzs, self.layer_sizes[-1]), device=self.device)
         u_int_current = torch.zeros_like(u_current)
+
+        u_current2 = torch.zeros((self.bzs, self.layer_sizes[-2]), device=self.device)
+        u_int_current2 = torch.zeros_like(u_current2)
 
         # Forward init
         with torch.no_grad():
@@ -347,55 +340,59 @@ class DFCL_network(Network, JacobianInterface):
         _ = self(self.input)
 
 
-        converged_mask = torch.zeros((bzs,), dtype=torch.bool, device=self.device)
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool, device=self.device)
+
         # === Dynamics ===
         for t in range(tmax - 1):
             if converged_mask.all():
                 break
-
             
-            error = self._compute_error(r_current[-1], self.targets)
+            error = self._compute_error(r_current[-1], target_activity)
 
             # PI control
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
             u_next = u_int_next + self.k_p * error
 
-
-            converged_mask |= (torch.abs(error)).mean(dim=1) < 0.005
-
-            #_, Js = model._calculate_full_jacobian()
+            converged_mask |= (torch.abs(error)).mean(dim=1) < threshold
 
             for i, layer in enumerate(self.layers):
                 r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal + apical feedback
-                v_ff_current[i] += (r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i]) * (~converged_mask.unsqueeze(1))
+                v_ff_current[i] += (r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i]) 
                 v_ff_current[i] = v_ff_current[i].clone().detach()
                 
 
                 tau = self.dt / self.time_constant_ratio
 
                 if i!=1:
-                    v_fb_current[i] = ((u_next)  @ self.feedback_weights[-(i+1)])* layer.activation_derivative(v_current[i])
+                    v_fb_current[i] = (self.feedback_layers[i+1](u_next)) 
                     v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
                 else:
-                    v_current[i] +=  (v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
-
+                    v_current[i] +=  tau * (v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
 
                 r_current[i] = layer.activation_fn(v_current[i])
-
 
                 layer.v_ff = v_current[i]
                 layer.r = r_current[i]
 
+            error2 = self._compute_error_mse(self.layers[0].activation_fn(v_ff_current[0]), r_current[-2])
+
+            # PI control
+            u_int_next2 = u_int_current2 + self.dt * (error2 - self.alpha * u_current2)
+            u_next2 = u_int_next2 + self.k_p * error2
+
             u_int_current = u_int_next
             u_current = u_next
 
+            u_int_current2 = u_int_next2
+            u_current2 = u_next2
+
             
-            grad_input = torch.sigmoid(r_current[0] @ self.feedback_weights[0])
-
-            self.input += tau* (grad_input-self.input) * ~converged_mask.unsqueeze(1) # input evolves dynamically
-
+            grad_input = (self.feedback_layers[0](u_next2))
+            input_pre += (grad_input + init_input_scaled - input_pre) * ~converged_mask.unsqueeze(1)
+            self.input = torch.sigmoid(input_pre)
+            
         # === Collect steady-state representations ===
         rs = [self.input]
         for i, layer in enumerate(self.layers):
@@ -404,9 +401,7 @@ class DFCL_network(Network, JacobianInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-
-
-        
-        generated_inputs = torch.sigmoid(r_current[0] @ self.feedback_weights[0])
+        generated_inputs = torch.sigmoid(self.feedback_layers[0](r_current[0]))
 
         return generated_inputs, rs[-1]
+

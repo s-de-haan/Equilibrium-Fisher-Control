@@ -500,7 +500,7 @@ class TrainerDFCGen(TrainerDFCL):
             generated_inputs_full, generated_targets = self.model.generate_samples(target_labels, X, batch_size = self.bzs_gen, tmax = 5000)
 
             generated_labels_full = torch.softmax(generated_targets, dim=1)
-            #y_hat = self.model(generated_inputs)
+            y_hat = self.model(generated_inputs)
 
             for k in range(int(self.bzs_gen/100)):
                 generated_inputs = generated_inputs_full[k*100:(k*100+100)]
