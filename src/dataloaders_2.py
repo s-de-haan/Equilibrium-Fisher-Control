@@ -215,7 +215,7 @@ class BaseContinualDataloader:
 
     def _create_dataloader(self, tensor_dataset, shuffle=True):
         """Create a dataloader with consistent settings."""
-        generator = torch.Generator(device=self.device).manual_seed(self.config.seed)
+        generator = torch.Generator(device="cpu").manual_seed(self.config.seed)
 
         return DataLoader(
             dataset=tensor_dataset,
