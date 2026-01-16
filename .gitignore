@@ -192,3 +192,9 @@ wandb/
 
 # Outputs folder
 outputs/
+
+
+notebook.log
+notebook.slurm
+
+/deprecated

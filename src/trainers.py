@@ -217,8 +217,8 @@ class TrainerInterface:
             y = y.to(self.device)
 
             y_hat = self.model(X)
-            
-            loss = self.model.loss_fn(y_hat, y)
+
+            loss = self.model.calculate_loss(y_hat, y)
 
             epoch_loss += loss.item()
             total += y.size(0)
@@ -454,8 +454,8 @@ class TrainerCL(TrainerInterface):
                 task_end_output = (task_id + 1) * classes_per_task
                 y_hat_task = y_hat[:, task_start_output:task_end_output]
                 y_task_specific = y_task[:, task_start_output:task_end_output]
-                
-                loss = self.model.loss_fn(y_hat_task, y_task_specific)
+
+                loss = self.model.calculate_loss(y_hat_task, y_task_specific)
                 epoch_loss += loss.item() * X_task.shape[0]  # Weight by batch size
                 total += X_task.shape[0]
                 correct += (y_hat_task.argmax(dim=1) == y_task_specific.argmax(dim=1)).sum().item()
@@ -481,7 +481,7 @@ class TrainerCL(TrainerInterface):
         test_data, test_targets = self._process_data(
             task_subset,
             self.tasks[task_id],
-            lambda i: self.test_dataset.targets[task_subset.indices[i]].item()
+            lambda t: t.item() if torch.is_tensor(t) else t
         )
         
         return TensorDataset(

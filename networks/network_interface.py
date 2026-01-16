@@ -28,25 +28,20 @@ class Network(nn.Module):
         self.task_masks_complement = {}
         
         for task_id in range(self.num_tasks):
-            if self.setting == "taskIL":
-                # Task IL: only current task's outputs
-                start_idx = task_id * self.classes_per_task
-                end_idx = (task_id + 1) * self.classes_per_task
-                self.task_masks[task_id] = slice(start_idx, end_idx)
-                
-                # Complement: all other tasks
-                complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
-                self.task_masks_complement[task_id] = complement_indices
-                
-            elif self.setting in ["classIL5task", "classIL2task"]:
+            if "TaskIL" in self.setting:
+                # Task IL: network has only classes_per_task outputs, use all
+                self.task_masks[task_id] = slice(None)
+                self.task_masks_complement[task_id] = []
+
+            elif "ClassIL" in self.setting:
                 # Class IL: all classes up to current task
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(0, end_idx)
-                
+
                 # Complement: future classes only
                 complement_indices = list(range(end_idx, self.num_tasks * self.classes_per_task))
                 self.task_masks_complement[task_id] = complement_indices
-                
+
             else:  # domainIL
                 # Domain IL: all outputs (no masking)
                 self.task_masks[task_id] = slice(None)
@@ -95,6 +90,9 @@ class Network(nn.Module):
         )
 
     def calculate_loss(self, y_hat, y):
+        # If y is one-hot encoded, convert to class indices for CrossEntropyLoss
+        if y.dim() == 2 and y.shape[1] > 1:
+            y = y.argmax(dim=1)
         self.loss = self.loss_fn(y_hat, y)
         return self.loss
 
@@ -207,6 +205,16 @@ class JacobianInterface:
 
     def _set_targets_ce(self, y):
         """ CE loss solution """
+        if self.y_hat.shape[1] != y.shape[1]:
+            print(f"[DEBUG] ===== SHAPE MISMATCH =====")
+            print(f"[DEBUG] y_hat shape: {self.y_hat.shape}, y shape: {y.shape}")
+            print(f"[DEBUG] setting: {self.setting}")
+            print(f"[DEBUG] task_id: {self.task_id}")
+            print(f"[DEBUG] layer_sizes: {self.layer_sizes}")
+            print(f"[DEBUG] task_mask for current task: {self.task_masks[self.task_id]}")
+            print(f"[DEBUG] all task_masks: {self.task_masks}")
+            print(f"[DEBUG] num_tasks: {self.num_tasks}, classes_per_task: {self.classes_per_task}")
+            print(f"[DEBUG] =============================")
         self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
         self.output_size = self.targets.shape[1]
 

@@ -1,10 +1,7 @@
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset, TensorDataset
-import torchvision
+from torch.utils.data import DataLoader, Subset, TensorDataset
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
-from PIL import Image
-import numpy as np
 from src.utils import str2bool
 
 from torchvision import models
@@ -77,96 +74,6 @@ class MNIST:
         )
         return train_loader, test_loader
 
-class BaseDatasetWrapper(Dataset):
-    """Base wrapper for converting datasets to tensor format."""
-
-    def __init__(self, device, data, targets, classes, transform=None, flatten=True):
-        self.data = data
-        self.targets = targets
-        self.classes = classes
-        self.transform = transform
-        self.device = device
-        self.flatten = flatten
-
-    def __len__(self):
-        return len(self.data)
-
-    def _one_hot_encode(self, target):
-        target_idx = target.item() if torch.is_tensor(target) else target
-        return torch.eye(len(self.classes))[target_idx]
-
-    def __getitem__(self, idx):
-        raise NotImplementedError("Subclasses must implement __getitem__")
-
-
-class MNISTDatasetWrapper(BaseDatasetWrapper):
-    """MNIST-specific dataset wrapper."""
-
-    def __getitem__(self, idx):
-        img = self.data[idx]  # Tensor (28, 28)
-        target = self.targets[idx]
-
-        # Convert to PIL Image
-        img = Image.fromarray(img.numpy(), mode="L")
-
-        if self.transform:
-            img = self.transform(img)  # Returns tensor (1, 28, 28)
-
-        target = self._one_hot_encode(target)
-
-        if self.flatten:
-            img = img.view(28 * 28)
-
-        return img, target
-
-
-class CIFAR10DatasetWrapper(BaseDatasetWrapper):
-    """CIFAR-10-specific dataset wrapper."""
-
-    def __getitem__(self, idx):
-        img = self.data[idx]  # Tensor (32, 32, 3) or (3, 32, 32)
-        target = self.targets[idx]
-
-        # Convert to PIL Image
-        img = img.numpy() if torch.is_tensor(img) else img
-        if img.shape[0] in [1, 3]:  # Channel-first to channel-last
-            img = img.transpose(1, 2, 0)
-        img = Image.fromarray(img)
-
-        if self.transform:
-            img = self.transform(img)  # Returns tensor (3, 32, 32)
-
-        target = self._one_hot_encode(target)
-
-        if self.flatten:
-            img = img.view(3 * 32 * 32)
-
-        return img, target
-
-
-class TinyImageNetDatasetWrapper(BaseDatasetWrapper):
-    """TinyImageNet-specific dataset wrapper."""
-
-    def __getitem__(self, idx):
-        img = self.data[idx]  # Tensor (64, 64, 3) or (3, 64, 64)
-        target = self.targets[idx]
-
-        # Convert to PIL Image
-        img = img.numpy() if torch.is_tensor(img) else img
-        if img.shape[0] in [1, 3]:  # Channel-first to channel-last
-            img = img.transpose(1, 2, 0)
-        img = Image.fromarray(img.astype(np.uint8))
-
-        if self.transform:
-            img = self.transform(img)  # Returns tensor (3, 64, 64)
-
-        target = self._one_hot_encode(target)
-
-        if self.flatten:
-            img = img.view(3 * 64 * 64)
-
-        return img, target
-
 
 class BaseContinualDataloader:
     """Base class for continual learning dataloaders."""
@@ -191,7 +98,6 @@ class BaseContinualDataloader:
             )
             self.in_channels = 1
             self.img_size = 28
-            self.dataset_wrapper = MNISTDatasetWrapper
         elif dataset_name == "CIFAR10":
             self.flatten = (
                 False
@@ -200,7 +106,6 @@ class BaseContinualDataloader:
             )
             self.in_channels = 3
             self.img_size = 32
-            self.dataset_wrapper = CIFAR10DatasetWrapper
         elif dataset_name == "TinyImageNet":
             self.flatten = (
                 False
@@ -209,7 +114,6 @@ class BaseContinualDataloader:
             )
             self.in_channels = 3
             self.img_size = 64
-            self.dataset_wrapper = TinyImageNetDatasetWrapper
 
         # Set input channels for config
         config.in_channels = self.in_channels
@@ -266,8 +170,11 @@ class BaseContinualDataloader:
             )
 
     def _define_tasks(self):
-        """Define task splits - to be overridden by subclasses."""
-        self.tasks = [[0, 1], [2, 3], [4, 5], [6, 7], [8, 9]]
+        """Define task splits based on num_tasks and classes_per_task."""
+        self.tasks = [
+            list(range(i * self.classes_per_task, (i + 1) * self.classes_per_task))
+            for i in range(self.num_tasks)
+        ]
 
     def _precompute_task_indices(self):
         self.task_train_indices = {}
@@ -308,15 +215,12 @@ class BaseContinualDataloader:
 
     def _create_dataloader(self, tensor_dataset, shuffle=True):
         """Create a dataloader with consistent settings."""
-        try:
-            generator = torch.Generator(device=self.device)
-        except RuntimeError:
-            generator = torch.Generator(device="cpu")
+        generator = torch.Generator(device=self.device).manual_seed(self.config.seed)
 
         return DataLoader(
             dataset=tensor_dataset,
             batch_size=self.batch_size,
-            generator=generator.manual_seed(self.config.seed),
+            generator=generator,
             num_workers=self.config.num_workers,
             shuffle=shuffle,
         )
@@ -365,8 +269,6 @@ class BaseContinualDataloader:
         
         # Define these once outside the loop
         # Use InterpolationMode.BICUBIC for better ResNet performance
-        resize = transforms.Resize((224, 224), interpolation=transforms.InterpolationMode.BICUBIC)
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
         self.encoder.eval()
         with torch.inference_mode():
@@ -417,43 +319,6 @@ class BaseContinualDataloader:
         self.config.in_channels = self.encoder_out_dim # sets the network's expected input dimension to 512  
 
 
-class DomainILDataloader(BaseContinualDataloader):
-    """Domain Incremental Learning dataloader."""
-
-    def get_dataloaders(self, task_id):
-        classes = self.tasks[task_id]
-
-        train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
-        test_dataset = self._get_task_subset(is_train=False, task_id=task_id)
-
-        # Process data with binary remapping (0 vs 1 for each task)
-        train_data, train_targets = self._process_data(
-            train_dataset,
-            classes,
-            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
-        )
-
-        test_data, test_targets = self._process_data(
-            test_dataset,
-            classes,
-            lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
-        )
-
-        # Create tensor datasets with binary one-hot encoding
-        train_tensor_dataset = TensorDataset(
-            train_data.float(),
-            self._one_hot_encode(train_targets, 2),  # Always 2 classes for Domain IL
-        )
-        test_tensor_dataset = TensorDataset(
-            test_data.float(), self._one_hot_encode(test_targets, 2)
-        )
-
-        return (
-            self._create_dataloader(train_tensor_dataset, shuffle=True),
-            self._create_dataloader(test_tensor_dataset, shuffle=False),
-        )
-
-
 class TaskILDataloader(BaseContinualDataloader):
     """Task Incremental Learning dataloader."""
 
@@ -477,20 +342,19 @@ class TaskILDataloader(BaseContinualDataloader):
             lambda t: classes.index(t.item() if torch.is_tensor(t) else t),
         )
 
-        # Create tensor datasets with binary one-hot encoding
+        # Create tensor datasets with one-hot encoding for this task's classes
         train_tensor_dataset = TensorDataset(
             train_data.float(),
-            self._one_hot_encode(train_targets, 2),  # Always 2 classes per task
+            self._one_hot_encode(train_targets, self.classes_per_task),
         )
         test_tensor_dataset = TensorDataset(
-            test_data.float(), self._one_hot_encode(test_targets, 2)
+            test_data.float(), self._one_hot_encode(test_targets, self.classes_per_task)
         )
 
         return (
             self._create_dataloader(train_tensor_dataset, shuffle=True),
             self._create_dataloader(test_tensor_dataset, shuffle=False),
         )
-
 
 class ClassILDataloader(BaseContinualDataloader):
     """Class Incremental Learning dataloader."""
@@ -528,151 +392,53 @@ class ClassILDataloader(BaseContinualDataloader):
             self._create_dataloader(test_tensor_dataset, shuffle=False),
         )
 
-
-class ClassIL5TaskDataloader(BaseContinualDataloader):
+class ClassIL5TaskDataloader(ClassILDataloader):
     """5-task Class Incremental Learning dataloader (2 classes per task)."""
-    
+
     def __init__(self, config, dataset_name="MNIST"):
-        super().__init__(config, dataset_name)
         self.num_tasks = 5
         self.classes_per_task = 2
-
-    def get_dataloaders(self, task_id):
-        all_classes_so_far = []
-        for i in range(task_id + 1):
-            all_classes_so_far.extend(self.tasks[i])
-        
-        # Training: only current task
-        train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
-        # Testing: all seen classes so far
-        test_dataset = self._get_cumulative_test_subset(up_to_task_id=task_id)
-        num_classes_so_far = (task_id + 1) * self.classes_per_task
-
-        train_data, train_targets = self._process_data(
-            train_dataset, self.tasks[task_id],
-            lambda t: t.item() if torch.is_tensor(t) else t
-        )
-
-        test_data, test_targets = self._process_data(
-            test_dataset, all_classes_so_far,
-            lambda t: t.item() if torch.is_tensor(t) else t
-        )
-
-        train_tensor_dataset = TensorDataset(
-            train_data.float(), self._one_hot_encode(train_targets, num_classes_so_far)
-        )
-        test_tensor_dataset = TensorDataset(
-            test_data.float(), self._one_hot_encode(test_targets, num_classes_so_far)
-        )
-
-        return (
-            self._create_dataloader(train_tensor_dataset, shuffle=True),
-            self._create_dataloader(test_tensor_dataset, shuffle=False),
-        )
-    
-
-    def get_all_tasks_dataloaders(self):
-        """Get dataloaders for all tasks."""
-        return [self.get_dataloaders(task_id) for task_id in range(self.num_tasks)]
-
-
-class ClassIL2TaskDataloader(BaseContinualDataloader):
-    """2-task Class Incremental Learning dataloader (5 classes per task)."""
-    
-    def __init__(self, config, dataset_name="MNIST"):
-        # Set task configuration before calling super()
-        self.num_tasks = 2
-        self.classes_per_task = 5
         super().__init__(config, dataset_name)
-        
-    def _define_tasks(self):
-        """Override to define 2 tasks with 5 classes each."""
-        self.tasks = [
-            [0, 1, 2, 3, 4],  # Task 0: first 5 digits
-            [5, 6, 7, 8, 9]   # Task 1: second 5 digits
-        ]
 
-    def get_dataloaders(self, task_id):
-        all_classes_so_far = []
-        for i in range(task_id + 1):
-            all_classes_so_far.extend(self.tasks[i])
-        
-        # Training: only current task
-        train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
-        # Testing: all seen classes so far
-        test_dataset = self._get_cumulative_test_subset(up_to_task_id=task_id)
-        num_classes_so_far = (task_id + 1) * self.classes_per_task
 
-        train_data, train_targets = self._process_data(
-            train_dataset, self.tasks[task_id],
-            lambda t: t.item() if torch.is_tensor(t) else t
-        )
+class TaskIL10TaskDataloader(TaskILDataloader):
+    """10-task Task Incremental Learning dataloader (20 classes per task, for TinyImageNet)."""
 
-        test_data, test_targets = self._process_data(
-            test_dataset, all_classes_so_far,
-            lambda t: t.item() if torch.is_tensor(t) else t
-        )
+    def __init__(self, config, dataset_name="TinyImageNet"):
+        self.num_tasks = 10
+        self.classes_per_task = 20
+        super().__init__(config, dataset_name)
 
-        train_tensor_dataset = TensorDataset(
-            train_data.float(), self._one_hot_encode(train_targets, num_classes_so_far)
-        )
-        test_tensor_dataset = TensorDataset(
-            test_data.float(), self._one_hot_encode(test_targets, num_classes_so_far)
-        )
 
-        return (
-            self._create_dataloader(train_tensor_dataset, shuffle=True),
-            self._create_dataloader(test_tensor_dataset, shuffle=False),
-        )
+class ClassIL10TaskDataloader(ClassILDataloader):
+    """10-task Class Incremental Learning dataloader (20 classes per task, for TinyImageNet)."""
+
+    def __init__(self, config, dataset_name="TinyImageNet"):
+        self.num_tasks = 10
+        self.classes_per_task = 20
+        super().__init__(config, dataset_name)
     
-    def get_all_tasks_dataloaders(self):
-        """Get dataloaders for all tasks."""
-        return [self.get_dataloaders(task_id) for task_id in range(self.num_tasks)]
 
-
-# Factory functions to maintain compatibility with existing code
-def DomainILMNIST(config):
-    return DomainILDataloader(config, "MNIST")
-
+# Factory functions
+### MNIST
 def TaskILMNIST(config):
     return TaskILDataloader(config, "MNIST")
-
 
 def ClassILMNIST5Task(config):
     return ClassIL5TaskDataloader(config, "MNIST")
 
-def ClassILMNIST2Task(config):
-    return ClassIL2TaskDataloader(config, "MNIST")
 
-
-### CIFAR10 with encoding enabled
-def ClassILCIFAR2Task(config):
-    return ClassIL2TaskDataloader(config, "CIFAR10")
+### CIFAR10
+def TaskILCIFAR10(config):
+    return TaskILDataloader(config, "CIFAR10")
 
 def ClassILCIFAR5Task(config):
     return ClassIL5TaskDataloader(config, "CIFAR10")
 
 
-### OLD CIFAR
-def TaskILCIFAR10(config):
-    return TaskILDataloader(config, "CIFAR10")
-
-def ClassILCIFAR105Task(config):
-    return ClassIL5TaskDataloader(config, "CIFAR10")
-
-def ClassILCIFAR102Task(config):
-    return ClassIL2TaskDataloader(config, "CIFAR10")
-
-
 ### TinyImageNet
-def DomainILTinyImageNet(config):
-    return DomainILDataloader(config, "TinyImageNet")
-
 def TaskILTinyImageNet(config):
-    return TaskILDataloader(config, "TinyImageNet")
+    return TaskIL10TaskDataloader(config, "TinyImageNet")
 
-def ClassILTinyImageNet2Task(config):
-    return ClassIL2TaskDataloader(config, "TinyImageNet")
-
-def ClassILTinyImageNet5Task(config):
-    return ClassIL5TaskDataloader(config, "TinyImageNet")
+def ClassILTinyImageNet10Task(config):
+    return ClassIL10TaskDataloader(config, "TinyImageNet")
