@@ -100,16 +100,20 @@ def find_available_gpu(gpu_ids: list, min_free_vram: int, gpu_processes: dict) -
         # Check if there's already a process running on this GPU
         if gpu_id in gpu_processes:
             proc = gpu_processes[gpu_id]
-            if proc.poll() is None:  # Still running
+            poll_result = proc.poll()
+            if poll_result is None:  # Still running
                 continue
             else:
                 # Process finished, remove from tracking
+                print(f"[DEBUG] GPU {gpu_id} process finished with exit code {poll_result}", flush=True)
                 del gpu_processes[gpu_id]
 
         # Check VRAM
         free_mem = get_free_memory(gpu_id)
         if free_mem >= min_free_vram:
             return gpu_id
+        else:
+            print(f"[DEBUG] GPU {gpu_id} has {free_mem} MiB free (need {min_free_vram})", flush=True)
 
     return None
 
@@ -150,7 +154,7 @@ def main():
                 print(f"[Sweep status] state={status['state']}, "
                       f"finished={status['finished']}, running={status['running']}, "
                       f"pending={status['pending']}, failed={status['failed']}, "
-                      f"expected={status['expected']}")
+                      f"expected={status['expected']}", flush=True)
 
                 # Check if sweep is done
                 if status['state'] in ('FINISHED', 'CANCELED'):
@@ -174,16 +178,21 @@ def main():
 
             if available_gpu is not None:
                 # Launch a single run on this GPU using --count 1
-                command = f"CUDA_VISIBLE_DEVICES={available_gpu} wandb agent --count 1 {sweep_id}"
-                print(f"Launching agent on GPU {available_gpu}: {command}")
+                command = f"CUDA_VISIBLE_DEVICES={available_gpu} WANDB_START_METHOD=thread wandb agent --count 1 {sweep_id}"
+                print(f"Launching agent on GPU {available_gpu}: {command}", flush=True)
                 proc = subprocess.Popen(command, shell=True)
                 gpu_processes[available_gpu] = proc
                 total_launched += 1
+                print(f"[DEBUG] Launched on GPU {available_gpu}, total_launched={total_launched}, gpu_processes keys: {list(gpu_processes.keys())}", flush=True)
                 time.sleep(2)  # Brief pause before checking for more GPUs
             else:
                 # No GPU available, wait and retry
                 active_gpus = list(gpu_processes.keys())
-                print(f"Waiting for GPU... Active processes on GPUs: {active_gpus}")
+                # Debug: show which processes are still running vs finished
+                for gid, p in gpu_processes.items():
+                    poll_res = p.poll()
+                    print(f"[DEBUG] gpu_processes[{gid}]: poll()={poll_res}", flush=True)
+                print(f"Waiting for GPU... Active processes on GPUs: {active_gpus}", flush=True)
                 time.sleep(args.poll_interval)
 
         # Wait for any remaining processes

@@ -17,7 +17,11 @@ from src.utils import str2bool
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train continual learning model using CLI args.")
-    
+
+    # Config file (optional, CLI args override config file values)
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to YAML config file (CLI args override config values)")
+
     # Network architecture & training hyperparameters:
     parser.add_argument("--run_name", type=str, default="default", help="Run name for wandb")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
@@ -30,7 +34,9 @@ def parse_args():
                         help="whether to train with cross entropy ('ce') or mean squared error ('mse') loss")
     parser.add_argument("--optimizer", type=str, default="Adam", choices=["Adam", "SGD"], help="Optimizer")
     parser.add_argument("--scheduler", type=str, default="CosineAnnealingLR", help="Scheduler")
-    
+    parser.add_argument("--layer_size", type=int, default=100,
+                        help="Size of the hidden layers")
+
     # Environment settings hyperparameters
     parser.add_argument("--output_dir", type=str, default="./outputs",
                         help="Output directory for saving training and evaluation logs")
@@ -65,7 +71,7 @@ def parse_args():
                         help="Training method to use")
     parser.add_argument("--setting", type=str, default="ClassILCIFAR5Task",
                         choices=[
-                            "TaskILMNIST", "ClassILMNIST5Task",
+                            "TaskILMNIST", "ClassILMNIST5Task", "ClassILMNIST5Task_Encoded", "TaskILMNIST5Task_Encoded",
                             "TaskILCIFAR10", "ClassILCIFAR5Task",
                             "TaskILTinyImageNet", "ClassILTinyImageNet10Task"
                         ],
@@ -84,6 +90,15 @@ def parse_args():
                         help="Set to true to freeze encoder weights")
 
 
+    # First pass: check if config file is provided
+    args_initial, _ = parser.parse_known_args()
+
+    # If config file provided, load it and set as defaults
+    if args_initial.config is not None:
+        config_from_file = OmegaConf.load(args_initial.config)
+        parser.set_defaults(**OmegaConf.to_container(config_from_file))
+
+    # Second pass: parse all arguments (CLI args override config file)
     args, unknown = parser.parse_known_args()
     if unknown:
         print("Ignoring unknown CLI arguments:", unknown)
@@ -107,6 +122,8 @@ def get_dataset(setting: str, dataset: str, config):
     dataloader_map = {
         "TaskILMNIST": TaskILMNIST,
         "ClassILMNIST5Task": ClassILMNIST5Task,
+        "ClassILMNIST5Task_Encoded": ClassILMNIST5Task,
+        "TaskILMNIST5Task_Encoded": TaskILMNIST,
         "TaskILCIFAR10": TaskILCIFAR10,
         "ClassILCIFAR5Task": ClassILCIFAR5Task,
         "TaskILTinyImageNet": TaskILTinyImageNet,
@@ -136,6 +153,8 @@ def main():
         # MNIST: no encoder needed, 5 tasks x 2 classes, input=784
         "TaskILMNIST": {"use_cnn_encoder": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 784, "output_dim": 2},
         "ClassILMNIST5Task": {"use_cnn_encoder": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 784, "output_dim": 10},
+        "ClassILMNIST5Task_Encoded": {"use_cnn_encoder": True, "flatten_imgs": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
+        "TaskILMNIST5Task_Encoded": {"use_cnn_encoder": True, "flatten_imgs": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 2},
         # CIFAR10: encoder needed, 5 tasks x 2 classes, input=512 (ResNet embedding)
         "TaskILCIFAR10": {"use_cnn_encoder": True, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 2},
         "ClassILCIFAR5Task": {"use_cnn_encoder": True, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
@@ -155,7 +174,7 @@ def main():
     args.use_cnn_encoder = cfg["use_cnn_encoder"]
     args.num_tasks = cfg["num_tasks"]
     args.classes_per_task = cfg["classes_per_task"]
-    args.layers = [cfg["input_dim"], 100, 100, cfg["output_dim"]]
+    args.layers = [cfg["input_dim"], args.layer_size, args.layer_size, cfg["output_dim"]]
 
     # Convert the Namespace to an OmegaConf config object.
     config = OmegaConf.create(vars(args))

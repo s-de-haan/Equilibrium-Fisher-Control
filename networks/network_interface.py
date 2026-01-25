@@ -27,13 +27,15 @@ class Network(nn.Module):
         self.task_masks = {}
         self.task_masks_complement = {}
         
+        setting_lower = self.setting.lower()
         for task_id in range(self.num_tasks):
-            if "TaskIL" in self.setting:
-                # Task IL: network has only classes_per_task outputs, use all
+            if "taskil" in setting_lower:
+                # Task IL with per-task head: no masking needed since the network
+                # already outputs only the current task's classes (e.g., 2 outputs)
                 self.task_masks[task_id] = slice(None)
                 self.task_masks_complement[task_id] = []
 
-            elif "ClassIL" in self.setting:
+            elif "classil" in setting_lower:
                 # Class IL: all classes up to current task
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(0, end_idx)

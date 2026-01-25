@@ -96,8 +96,6 @@ class TrainerInterface:
             self.optimizer = torch.optim.Adam(
                 self.model.parameters(),
                 lr=self.config["lr"],
-                betas=(0.9, 0.999),
-                eps=5.83238643406511e-07
             )
         elif self.config.optimizer == "SGD":
             self.optimizer = torch.optim.SGD(
@@ -205,11 +203,13 @@ class TrainerInterface:
             epoch=epoch,
         )
 
+        self.model.eval()
+
         epoch_loss = 0
         total = 0
         correct = 0
 
-        if self.setting == "taskIL":
+        if _is_task_il_setting(self.setting):
             self.model.task_id = task_id
 
         for X, y in self.test_loader:
@@ -273,6 +273,17 @@ class Trainer(TrainerInterface):
             self._save_model()
 
 
+def _is_class_il_setting(setting: str) -> bool:
+    """Check if the setting is a Class-IL (class-incremental learning) setting."""
+    return "classil" in setting.lower()
+
+def _is_task_il_setting(setting: str) -> bool:
+    """Check if the setting is a Task-IL (task-incremental learning) setting.""" 
+    return "taskil" in setting.lower()
+
+
+
+
 class TrainerCL(TrainerInterface):
     def __init__(self, model, tasks_dataloaders, config, callbacks=None):
         super().__init__(model, config, callbacks)
@@ -283,6 +294,54 @@ class TrainerCL(TrainerInterface):
         self.best_cumulative_accuracy = -float('inf')
         self.best_model_state = None
         self.peak_epoch = 0
+
+    def _least_square_initialization(self, dataloader, task_id, weight_decay=1e-4):
+        """Least-square optimal initialization for new classifier weights."""
+        self.model.eval()
+        classes_per_task = self.config.classes_per_task
+        new_start = task_id * classes_per_task
+        new_end = (task_id + 1) * classes_per_task
+
+        features_list = []
+        labels_list = []
+
+        with torch.no_grad():
+            for x, y in dataloader:
+                x = x.to(self.device)
+                features = x
+                for layer in self.model.layers[:-1]:
+                    features = layer(features)
+                features_list.append(features)
+                labels_list.append(y.argmax(dim=1))
+
+        features = torch.cat(features_list, dim=0)
+        labels = torch.cat(labels_list, dim=0)
+
+        N, d = features.shape
+        features_ext = torch.cat([features, torch.ones(N, 1, device=features.device)], dim=1)
+
+        num_new_classes = new_end - new_start
+        targets = torch.zeros(N, num_new_classes, device=features.device)
+        for i, label in enumerate(labels):
+            if new_start <= label < new_end:
+                targets[i, label - new_start] = 1.0
+
+        mask = (labels >= new_start) & (labels < new_end)
+        features_new = features_ext[mask]
+        targets_new = targets[mask]
+
+        ZtZ = features_new.T @ features_new
+        ZtY = features_new.T @ targets_new
+
+        reg = weight_decay * features_new.shape[0] * torch.eye(d + 1, device=features.device)
+        W_ls = torch.linalg.solve(ZtZ + reg, ZtY)
+
+        with torch.no_grad():
+            for c_idx, c in enumerate(range(new_start, new_end)):
+                self.model.layers[-1]._weights[c] = W_ls[:d, c_idx]
+                self.model.layers[-1]._bias[c] = W_ls[d, c_idx]
+
+        logger.info(f"Applied least-square initialization for task {task_id} classes [{new_start}, {new_end})")
 
     def train(self):
         self.callback_handler.on_train_begin(training_config=self.config)
@@ -302,6 +361,13 @@ class TrainerCL(TrainerInterface):
 
             if task_id == 0:
                 self.test_loader_first_task = test_loader
+            else:
+                # Apply least-square initialization for new task classifier weights 
+                # Only apply if Class IL
+                if _is_class_il_setting(self.config.setting):
+                    self._least_square_initialization(train_loader, task_id)
+                if hasattr(self.model, '_first_task'):
+                    self.model._first_task = False
 
             # Reset peak tracking for current task
             if self.use_peak and task_id > 0:
@@ -321,7 +387,7 @@ class TrainerCL(TrainerInterface):
                 metrics.epoch_train_loss = epoch_train_loss
 
                 if self.test_loader is not None:
-                    if self.config.setting in ["classIL5task", "classIL2task"]:
+                    if _is_class_il_setting(self.config.setting):
                         epoch_test_loss, accuracy = self._test_step(epoch, task_id)
                         # Get per-task metrics from instance variables
                         task_losses = getattr(self, 'current_task_losses', [])
@@ -365,12 +431,13 @@ class TrainerCL(TrainerInterface):
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
             self._set_optimizer()
+            self._set_scheduler()
             
         if self.save:
             self._save_model()
 
     def _test_seen_tasks(self, current_task_id):
-        if self.config.setting in ["classIL5task", "classIL2task"]:  # Updated condition
+        if _is_class_il_setting(self.config.setting):  # Updated condition
             logger.info(f"Testing on all seen classes up to Task {current_task_id + 1}")
             
             _, self.test_loader = self.tasks_dataloaders[current_task_id]
@@ -398,75 +465,120 @@ class TrainerCL(TrainerInterface):
             )
     
     def _test_step(self, epoch, task_id):
-        if self.config.setting in ["classIL5task", "classIL2task"]:
+        if _is_class_il_setting(self.config.setting):
             return self._test_step_classil(epoch, task_id)
         else:
             return super()._test_step(epoch, task_id)
 
     def _test_step_classil(self, epoch, current_task_id):
-        cumulative_loss, cumulative_accuracy = super()._test_step(epoch, current_task_id)
+        """
+        Test step for Class-IL using task-restricted evaluation (notebook style).
+
+        Computes:
+        - Combined accuracy: task-restricted eval over all seen classes [0, seen_classes_end]
+        - Per-task accuracies: task-restricted eval for each task's class range
+        """
+        classes_per_task = self.config.classes_per_task
+        seen_classes_end = (current_task_id + 1) * classes_per_task - 1  # inclusive
+
+        # Get cumulative test loader
+        _, cumulative_test_loader = self.tasks_dataloaders[current_task_id]
+
+        # Combined accuracy using task-restricted evaluation (notebook style)
+        combined_acc, _ = self._evaluate_task_restricted(
+            cumulative_test_loader, class_start=0, class_end=seen_classes_end
+        )
+        # Convert to percentage
+        cumulative_accuracy = combined_acc * 100
+
+        # Get per-task accuracies
         self.current_task_losses, self.current_task_accuracies = self._test_individual_tasks_classil(current_task_id)
-        
+
+        # Loss is not computed in task-restricted eval, set to 0
+        cumulative_loss = 0.0
+
         return cumulative_loss, cumulative_accuracy
 
     @torch.no_grad()
+    def _evaluate_task_restricted(self, test_loader, class_start, class_end):
+        """
+        Evaluate using task-restricted output slice (notebook-style evaluation).
+
+        This matches the notebook's evaluate() function:
+        - Filters samples to those with labels in [class_start, class_end]
+        - Computes predictions using only the output slice for those classes
+        - Returns accuracy as a fraction (0-1), not percentage
+
+        Args:
+            test_loader: DataLoader with test samples
+            class_start: First class index (inclusive)
+            class_end: Last class index (inclusive)
+
+        Returns:
+            accuracy: float in [0, 1]
+            total: number of samples evaluated
+        """
+        self.model.eval()
+        correct = 0
+        total = 0
+
+        for X, y in test_loader:
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            # Get true class labels from one-hot encoding
+            labels = y.argmax(dim=1)
+
+            # Mask for samples in the specified class range
+            mask = (labels >= class_start) & (labels <= class_end)
+            if mask.sum() == 0:
+                continue
+
+            X_masked = X[mask]
+            labels_masked = labels[mask]
+
+            # Forward pass
+            y_hat = self.model(X_masked)
+
+            # Predict using only the task-specific output slice
+            preds = y_hat[:, class_start:class_end+1].argmax(dim=1) + class_start
+
+            correct += (preds == labels_masked).sum().item()
+            total += mask.sum().item()
+
+        accuracy = correct / total if total > 0 else 0.0
+        return accuracy, total
+
+    @torch.no_grad()
     def _test_individual_tasks_classil(self, current_task_id):
-        """Test individual tasks for Class IL to get per-task metrics."""
+        """
+        Test individual tasks for Class IL using task-restricted evaluation.
+
+        This replicates the notebook's per-task accuracy computation:
+        - For each task, only consider samples from that task's classes
+        - Compute accuracy using only that task's output neurons
+        """
         task_losses = []
         task_accuracies = []
-        
+
         classes_per_task = self.config.classes_per_task
-        
+
         # Use the cumulative test loader (has all seen classes)
         _, cumulative_test_loader = self.tasks_dataloaders[current_task_id]
-        
-        for task_id in range(current_task_id + 1):
-            epoch_loss = 0
-            total = 0
-            correct = 0
-            
-            for X, y in cumulative_test_loader:
-                X = X.to(self.device)
-                y = y.to(self.device)
-                
-                # Get true class labels from one-hot encoding
-                true_classes = y.argmax(dim=1)  # Shape: [batch]
-                
-                # Filter to only samples from this task's classes
-                task_start_class = task_id * classes_per_task
-                task_end_class = (task_id + 1) * classes_per_task
-                
-                # Mask for samples belonging to this task
-                task_mask = (true_classes >= task_start_class) & (true_classes < task_end_class)
-                
-                if task_mask.sum() == 0:  # No samples for this task in this batch
-                    continue
-                    
-                # Extract samples for this task
-                X_task = X[task_mask]
-                y_task = y[task_mask]
-                
-                # Forward pass
-                y_hat = self.model(X_task)
-                
-                # Extract task-specific outputs for loss/accuracy
-                task_start_output = task_id * classes_per_task
-                task_end_output = (task_id + 1) * classes_per_task
-                y_hat_task = y_hat[:, task_start_output:task_end_output]
-                y_task_specific = y_task[:, task_start_output:task_end_output]
 
-                loss = self.model.calculate_loss(y_hat_task, y_task_specific)
-                epoch_loss += loss.item() * X_task.shape[0]  # Weight by batch size
-                total += X_task.shape[0]
-                correct += (y_hat_task.argmax(dim=1) == y_task_specific.argmax(dim=1)).sum().item()
-            
-            if total > 0:
-                task_losses.append(epoch_loss / total)
-                task_accuracies.append(100 * correct / total)
-            else:
-                task_losses.append(0.0)
-                task_accuracies.append(0.0)
-        
+        for task_id in range(current_task_id + 1):
+            task_start = task_id * classes_per_task
+            task_end = task_start + classes_per_task - 1  # inclusive
+
+            # Use task-restricted evaluation (notebook style)
+            acc, total = self._evaluate_task_restricted(
+                cumulative_test_loader, task_start, task_end
+            )
+
+            # Convert to percentage for consistency with rest of trainer
+            task_accuracies.append(acc * 100)
+            task_losses.append(0.0)  # Loss not computed in task-restricted eval
+
         return task_losses, task_accuracies
 
     def _get_task_subset_for_testing(self, task_id, current_task_id):
@@ -512,45 +624,56 @@ class WandBTrainerCL(TrainerCL):
         self.global_step += 1  # Increment the global step after each training epoch
         return epoch_loss
 
-    def _test_step(self, step: int, task_id: int = None) -> tuple:
+    def _test_step(self, epoch: int, task_id: int = None) -> tuple:
         """Single test step with WandB logging."""
-        epoch_loss, accuracy = super()._test_step(step, task_id)
+        epoch_loss, accuracy = super()._test_step(epoch, task_id)
         self._log_metrics({
             "test/loss": epoch_loss,
             "test/accuracy": accuracy
-        }, step)
+        }, self.global_step)
         return epoch_loss, accuracy
 
     def _test_seen_tasks(self, current_task_id: int):
         """Test on all seen tasks with WandB logging."""
-        if self.config.setting == "classIL":
-            # For Class IL, test once on all seen classes
+        if _is_class_il_setting(self.config.setting):
+            # For Class IL, use task-restricted evaluation (notebook style)
             logger.info(f"Testing on all seen classes up to Task {current_task_id + 1}")
-            
+
             _, self.test_loader = self.tasks_dataloaders[current_task_id]
-            epoch_test_loss, accuracy = self._test_step(self.global_step, current_task_id)
-            
-            # Log single accuracy for all seen classes
+            epoch_test_loss, combined_accuracy = self._test_step(self.global_step, current_task_id)
+
+            # Get per-task accuracies computed by _test_step_classil
+            task_accuracies = self.current_task_accuracies  # Already in percentage
+
+            # Log combined accuracy (task-restricted over all seen classes)
+            # Note: test/loss is 0 for class-IL (loss not computed in task-restricted eval)
             self._log_metrics({
-                "loss": epoch_test_loss,
-                "accuracy": accuracy
-            }, step=self.global_step, task_id=current_task_id)
-            
-            # Store single accuracy (not per-task)
-            if len(self.task_accuracies) <= current_task_id:
-                self.task_accuracies.append([])
-            self.task_accuracies[current_task_id] = [accuracy]  # Single value
-            
-            # Log aggregated metrics
-            all_accuracies = [acc[0] for acc in self.task_accuracies if acc]
-            avg_accuracy = sum(all_accuracies) / len(all_accuracies)
-            self._log_metrics({
-                "metrics/avg_accuracy": avg_accuracy,
-                "metrics/forgetting": max(all_accuracies) - min(all_accuracies) if len(all_accuracies) > 1 else 0.0
+                "test/combined_accuracy": combined_accuracy,
             }, step=self.global_step)
-            
+
+            # Log per-task accuracies (task-restricted per task)
+            for task_id, task_acc in enumerate(task_accuracies):
+                self._log_metrics({
+                    "accuracy": task_acc
+                }, step=self.global_step, task_id=task_id)
+
+            # Store combined accuracy AND per-task accuracies for final metrics
+            # Format: [combined_accuracy, task_0_acc, task_1_acc, ...]
+            self.task_accuracies.append({
+                'combined': combined_accuracy,
+                'per_task': task_accuracies.copy()
+            })
+
+            # Log aggregated metrics
+            avg_task_accuracy = sum(task_accuracies) / len(task_accuracies)
+            self._log_metrics({
+                "metrics/avg_task_accuracy": avg_task_accuracy,
+                "metrics/combined_accuracy": combined_accuracy,
+            }, step=self.global_step)
+
             return
 
+        # Task-IL: test each task separately
         task_accuracies = []
         for task_id in range(current_task_id + 1):
             logger.info(f"Testing on Task {task_id + 1}/{current_task_id + 1}")
@@ -590,9 +713,54 @@ class WandBTrainerCL(TrainerCL):
         super().train()
 
         # Log final metrics.
-        if wandb.run is not None:
-            wandb.run.summary.update({
-                "final_avg_accuracy": sum(self.task_accuracies[-1]) / len(self.task_accuracies[-1]),
-                "final_forgetting": max(self.task_accuracies[0]) - min(self.task_accuracies[-1])
-            })
+        if wandb.run is not None and self.task_accuracies:
+            final_snapshot = self.task_accuracies[-1]
+
+            # Handle both Class-IL (dict with 'combined' and 'per_task') and Task-IL (list)
+            if isinstance(final_snapshot, dict):
+                # Class-IL: use combined accuracy as the main metric
+                final_avg_accuracy = final_snapshot['combined']
+                final_task_accs = final_snapshot['per_task']
+
+                # Compute forgetting using per-task accuracies
+                forgetting_per_task = []
+                for task_id in range(len(final_task_accs) - 1):  # No forgetting for last task
+                    max_acc = max(
+                        snapshot['per_task'][task_id]
+                        for snapshot in self.task_accuracies
+                        if isinstance(snapshot, dict) and task_id < len(snapshot['per_task'])
+                    )
+                    forgetting = max_acc - final_task_accs[task_id]
+                    forgetting_per_task.append(forgetting)
+
+                avg_forgetting = sum(forgetting_per_task) / len(forgetting_per_task) if forgetting_per_task else 0.0
+
+                wandb.run.summary.update({
+                    "final_avg_accuracy": final_avg_accuracy,  # This is the combined accuracy (~46%)
+                    "final_avg_task_accuracy": sum(final_task_accs) / len(final_task_accs),  # Avg of per-task (~97%)
+                    "final_avg_forgetting": avg_forgetting,
+                    **{f"final_task_{i}_accuracy": acc for i, acc in enumerate(final_task_accs)}
+                })
+            else:
+                # Task-IL: use average of task accuracies
+                final_task_accs = final_snapshot
+                final_avg_accuracy = sum(final_task_accs) / len(final_task_accs)
+
+                forgetting_per_task = []
+                for task_id in range(len(final_task_accs) - 1):
+                    max_acc = max(
+                        snapshot[task_id]
+                        for snapshot in self.task_accuracies
+                        if task_id < len(snapshot)
+                    )
+                    forgetting = max_acc - final_task_accs[task_id]
+                    forgetting_per_task.append(forgetting)
+
+                avg_forgetting = sum(forgetting_per_task) / len(forgetting_per_task) if forgetting_per_task else 0.0
+
+                wandb.run.summary.update({
+                    "final_avg_accuracy": final_avg_accuracy,
+                    "final_avg_forgetting": avg_forgetting,
+                    **{f"final_task_{i}_accuracy": acc for i, acc in enumerate(final_task_accs)}
+                })
 

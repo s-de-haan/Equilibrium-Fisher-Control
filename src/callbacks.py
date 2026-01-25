@@ -6,6 +6,15 @@ from tqdm.auto import tqdm
 logger = logging.getLogger(__name__)
 
 
+def _is_class_il_setting(setting: str) -> bool:
+    """Check if the setting is a Class-IL (class-incremental learning) setting."""
+    class_il_settings = [
+        "classIL5task", "classIL2task",  # Legacy names
+        "ClassILMNIST5Task", "ClassILCIFAR5Task", "ClassILTinyImageNet10Task",  # New names
+    ]
+    return setting in class_il_settings
+
+
 class TrainingCallback:
     """
     Base class for creating training callbacks
@@ -187,7 +196,7 @@ class MetricConsolePrinterCallback(TrainingCallback):
         if logger is not None:
             epoch_train_loss = logs.epoch_train_loss
         
-            if training_config.setting in ["classIL5task", "classIL2task"]:
+            if _is_class_il_setting(training_config.setting):
                 task_losses = logs.get('task_losses', [])
                 task_accuracies = logs.get('task_accuracies', [])
                 cumulative_accuracy = logs.get('cumulative_accuracy', 0.0)
