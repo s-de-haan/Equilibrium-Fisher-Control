@@ -6,7 +6,7 @@ from networks.activation_function import *
 
 class EFC_network(Network, JacobianInterface, FisherInterface):
     def __init__(self, config, name="EFC_network"):
-        Network.__init__(self, DFC_layer, Softplus, Linear, config, name)
+        Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
         JacobianInterface.__init__(self, config)
         FisherInterface.__init__(self)
         
@@ -53,7 +53,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
 
         t=0
 
-        while converged_mask.float().mean().item() <= 0.95 and t < self.tmax:
+        while converged_mask.float().mean().item() <= 0.99 and t < self.tmax:
             t = t + 1
             # Stop if converged
             if converged_mask.all():
@@ -73,8 +73,8 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                 psi = psis[i]
                 gamma = self._compute_gamma(layer, i)
                 # if not self._first_task: # Maximal effect of gamma is to undo psi, i.e. back to baseline
-                    # scaling_factor = torch.abs(psi).mean()
-                    # gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
+                #     scaling_factor = torch.abs(psi).mean()
+                #     gamma = torch.tanh(gamma / scaling_factor) * scaling_factor
 
                 # Soma with modulation
                 if i == len(self.layers) - 1:  # For final layer, only update current task neurons
