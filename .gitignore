@@ -192,3 +192,5 @@ wandb/
 
 # Outputs folder
 outputs/
+
+deprecated/
