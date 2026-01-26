@@ -26,14 +26,18 @@ class Network(nn.Module):
         """Setup masks based on continual learning setting."""
         self.task_masks = {}
         self.task_masks_complement = {}
-        
+
         setting_lower = self.setting.lower()
         for task_id in range(self.num_tasks):
             if "taskil" in setting_lower:
-                # Task IL with per-task head: no masking needed since the network
-                # already outputs only the current task's classes (e.g., 2 outputs)
-                self.task_masks[task_id] = slice(None)
-                self.task_masks_complement[task_id] = []
+                # Task IL: only the current task's output neurons (e.g., task 0 → outputs 0-1)
+                start_idx = task_id * self.classes_per_task
+                end_idx = (task_id + 1) * self.classes_per_task
+                self.task_masks[task_id] = slice(start_idx, end_idx)
+
+                # Complement: all other tasks' outputs
+                complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
+                self.task_masks_complement[task_id] = complement_indices
 
             elif "classil" in setting_lower:
                 # Class IL: all classes up to current task

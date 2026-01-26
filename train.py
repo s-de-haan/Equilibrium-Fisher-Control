@@ -151,15 +151,15 @@ def main():
     # Configure settings based on the chosen data modality
     setting_configs = {
         # MNIST: no encoder needed, 5 tasks x 2 classes, input=784
-        "TaskILMNIST": {"use_cnn_encoder": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 784, "output_dim": 2},
+        "TaskILMNIST": {"use_cnn_encoder": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 784, "output_dim": 10},
         "ClassILMNIST5Task": {"use_cnn_encoder": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 784, "output_dim": 10},
         "ClassILMNIST5Task_Encoded": {"use_cnn_encoder": True, "flatten_imgs": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
-        "TaskILMNIST5Task_Encoded": {"use_cnn_encoder": True, "flatten_imgs": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 2},
+        "TaskILMNIST5Task_Encoded": {"use_cnn_encoder": True, "flatten_imgs": False, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
         # CIFAR10: encoder needed, 5 tasks x 2 classes, input=512 (ResNet embedding)
-        "TaskILCIFAR10": {"use_cnn_encoder": True, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 2},
+        "TaskILCIFAR10": {"use_cnn_encoder": True, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
         "ClassILCIFAR5Task": {"use_cnn_encoder": True, "num_tasks": 5, "classes_per_task": 2, "input_dim": 512, "output_dim": 10},
         # TinyImageNet: encoder needed, 10 tasks x 20 classes, input=512 (ResNet embedding)
-        "TaskILTinyImageNet": {"use_cnn_encoder": True, "num_tasks": 10, "classes_per_task": 20, "input_dim": 512, "output_dim": 20},
+        "TaskILTinyImageNet": {"use_cnn_encoder": True, "num_tasks": 10, "classes_per_task": 20, "input_dim": 512, "output_dim": 200},
         "ClassILTinyImageNet10Task": {"use_cnn_encoder": True, "num_tasks": 10, "classes_per_task": 20, "input_dim": 512, "output_dim": 200},
     }
 
