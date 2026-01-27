@@ -36,7 +36,7 @@ def create_sweep(config_path: str, project: str, entity: str) -> str:
         sweep=sweep_config,
         project=project,
         entity=entity
-    )
+    )   
     full_sweep_id = f"{entity}/{project}/{sweep_id}"
     print(f"Created sweep: {full_sweep_id}")
     return full_sweep_id

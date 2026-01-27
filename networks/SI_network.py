@@ -46,6 +46,19 @@ class SI_network(Network):
         
         self._init_tracking()
 
+    def to(self, *args, **kwargs):
+        """Override to() to also move tracking tensors to the correct device."""
+        self = super().to(*args, **kwargs)
+
+        # Move all tracking dictionaries to the new device
+        device = next(self.parameters()).device
+        for dict_attr in [self._omega, self._theta_star, self._w,
+                          self._theta_task_start, self._prev_params, self._prev_grads]:
+            for key in dict_attr:
+                dict_attr[key] = dict_attr[key].to(device)
+
+        return self
+
     def _init_tracking(self):
         """Initialize tracking variables for all parameters."""
         for n, p in self.named_parameters():

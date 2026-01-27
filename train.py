@@ -6,6 +6,8 @@ from networks.BP_network import BP_network
 from networks.DFC_network import DFC_network
 from networks.EWC_network import EWC_network
 from networks.EFC_network import EFC_network
+from networks.oEWC_network import oEWC_network
+from networks.SI_network import SI_network
 from src.dataloaders_2 import (
     TaskILMNIST, ClassILMNIST5Task,
     TaskILCIFAR10, ClassILCIFAR5Task,
@@ -67,7 +69,7 @@ def parse_args():
                         help="Epsilon for convergence check (interplay with dt_di and target_lr)")
     
     # Continual learning settings:
-    parser.add_argument("--method", type=str, default="efc", choices=["bp", "efc", "ewc"],
+    parser.add_argument("--method", type=str, default="efc", choices=["bp", "efc", "ewc", "oewc", "si"],
                         help="Training method to use")
     parser.add_argument("--setting", type=str, default="ClassILCIFAR5Task",
                         choices=[
@@ -111,6 +113,8 @@ def get_model(model_name: str, setting: str, config):
         "dfc": DFC_network,
         "ewc": EWC_network,
         "efc": EFC_network,
+        "oewc": oEWC_network,
+        "si": SI_network,
     }
     return models[model_name](config)
 
@@ -178,6 +182,10 @@ def main():
 
     # Convert the Namespace to an OmegaConf config object.
     config = OmegaConf.create(vars(args))
+
+    # Force SGD for BP method
+    if config.method == "bp":
+        config.optimizer = "SGD"
 
     print("Final configuration:")
     print(OmegaConf.to_yaml(config))
