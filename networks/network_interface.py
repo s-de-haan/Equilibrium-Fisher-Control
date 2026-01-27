@@ -6,47 +6,54 @@ from torch.func import functional_call, vmap, grad
 
 from networks.layers import *
 
+
 class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
         self.create_network(layer_class, activation_fn, out_activation_fn, config)
-        self.loss_fn = nn.MSELoss() if config.loss_fn == "mse" else nn.CrossEntropyLoss()
+        self.loss_fn = (
+            nn.MSELoss() if config.loss_fn == "mse" else nn.CrossEntropyLoss()
+        )
         self.loss_fn_name = config.loss_fn
         self.device = config.device
         self.lr = config.lr
         self.name = name
         self.setting = config.setting
-        
+
         # Setup task masks for continual learning
-        self.num_tasks = getattr(config, 'num_tasks', 5)
-        self.classes_per_task = getattr(config, 'classes_per_task', 2)
+        self.num_tasks = getattr(config, "num_tasks", 5)
+        self.classes_per_task = getattr(config, "classes_per_task", 2)
         self._setup_task_masks()
 
     def _setup_task_masks(self):
         """Setup masks based on continual learning setting."""
         self.task_masks = {}
         self.task_masks_complement = {}
-        
+
         for task_id in range(self.num_tasks):
             if self.setting == "taskIL":
                 # Task IL: only current task's outputs
                 start_idx = task_id * self.classes_per_task
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(start_idx, end_idx)
-                
+
                 # Complement: all other tasks
-                complement_indices = list(range(0, start_idx)) + list(range(end_idx, self.num_tasks * self.classes_per_task))
+                complement_indices = list(range(0, start_idx)) + list(
+                    range(end_idx, self.num_tasks * self.classes_per_task)
+                )
                 self.task_masks_complement[task_id] = complement_indices
-                
+
             elif self.setting in ["classIL5task", "classIL2task"]:
                 # Class IL: all classes up to current task
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(0, end_idx)
-                
+
                 # Complement: future classes only
-                complement_indices = list(range(end_idx, self.num_tasks * self.classes_per_task))
+                complement_indices = list(
+                    range(end_idx, self.num_tasks * self.classes_per_task)
+                )
                 self.task_masks_complement[task_id] = complement_indices
-                
+
             else:  # domainIL
                 # Domain IL: all outputs (no masking)
                 self.task_masks[task_id] = slice(None)
@@ -156,6 +163,7 @@ class Network(nn.Module):
 
         return fisher
 
+
 class JacobianInterface:
     def __init__(self, config):
         if config.mode == "ndi":
@@ -201,13 +209,15 @@ class JacobianInterface:
         return y - self._softmax(y_hat)
 
     def _set_targets_mse(self, y):
-        """ MSE loss solution """
+        """MSE loss solution"""
         self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
         self.output_size = self.targets.shape[1]
 
     def _set_targets_ce(self, y):
-        """ CE loss solution """
-        self.targets = self._softmax(self.y_hat) - self.target_lr * (self._softmax(self.y_hat) - y)
+        """CE loss solution"""
+        self.targets = self._softmax(self.y_hat) - self.target_lr * (
+            self._softmax(self.y_hat) - y
+        )
         self.output_size = self.targets.shape[1]
 
     def _calculate_layerwise_jacobians(self):
@@ -228,12 +238,12 @@ class JacobianInterface:
         # Recompute forward with requires_grad and retain_grad on modulatable activations
         x = self.input.detach().requires_grad_(True)
         activations_with_grad = []
-        
+
         for layer in self.layers:
             x = layer.forward(x)
             x.retain_grad()
             activations_with_grad.append(x)
-        
+
         y = activations_with_grad[-1]
         y = y[:, self.task_masks[self.task_id]]
 
@@ -258,7 +268,11 @@ class JacobianInterface:
             # Collect the k-th row for each layer
             for l, r_i in enumerate(activations_with_grad):
                 if l == len(activations_with_grad) - 1:
-                    grad_flat = r_i.grad[:, self.task_masks[self.task_id]].view(self.bzs, -1).clone()
+                    grad_flat = (
+                        r_i.grad[:, self.task_masks[self.task_id]]
+                        .view(self.bzs, -1)
+                        .clone()
+                    )
                 else:
                     grad_flat = r_i.grad.view(self.bzs, -1).clone()
                 ji_rows_per_layer[l].append(grad_flat)
@@ -280,7 +294,9 @@ class JacobianInterface:
             gamma_flat = gamma_i.view(self.bzs, -1) if not self._first_task else 0.0
 
             # Compute contribution to J_eff: Ji @ diag(r) @ Ji^T = (Ji_flat * r_ff_flat.unsqueeze(1)) @ Ji_flat.transpose(1, 2)
-            J_eff += torch.bmm(Ji_flat * r_ff_flat.unsqueeze(1), Ji_flat.transpose(1, 2))
+            J_eff += torch.bmm(
+                Ji_flat * r_ff_flat.unsqueeze(1), Ji_flat.transpose(1, 2)
+            )
 
             # Compute contribution to gamma_eff: Ji @ (gamma ⊙ r)
             gamma_r_flat = (gamma_flat * r_ff_flat).unsqueeze(-1)
@@ -293,40 +309,43 @@ class JacobianInterface:
         output_size = self.layer_sizes[-1]
 
         activations_derivatives = [
-            layer.activation_derivative(layer.v_ff)
-            for layer in self.layers
+            layer.activation_derivative(layer.v_ff) for layer in self.layers
         ]
 
         # Last layer
-        Js[-1] = activations_derivatives[-1].view(self.bzs, output_size, 1) * torch.eye(output_size)
+        Js[-1] = activations_derivatives[-1].view(self.bzs, output_size, 1) * torch.eye(
+            output_size
+        )
 
         # Rest of the layers
         for i in range(len(self.layers) - 2, -1, -1):
             Js[i] = activations_derivatives[i].unsqueeze(1) * torch.matmul(
-                Js[i+1], self.layers[i + 1].weights
+                Js[i + 1], self.layers[i + 1].weights
             )
 
         return torch.cat(Js, dim=2), Js
-    
+
     @torch.no_grad()
     def _calculate_psis(self, u):
         L = len(self.layers)
         psi_list = [None] * L
 
         # Derivatives per layer
-        activations_derivatives = [layer.activation_derivative(layer.v_ff) for layer in self.layers]
-        
+        activations_derivatives = [
+            layer.activation_derivative(layer.v_ff) for layer in self.layers
+        ]
+
         # Last layer - might have to expand u to full size
         full_u = torch.zeros_like(activations_derivatives[-1])
         full_u[:, self.task_masks[self.task_id]] = u
         psi = full_u * activations_derivatives[-1]
         psi_list[-1] = psi
-        
+
         # Backward from second-to-last to first
         for i in range(L - 2, -1, -1):
             psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
             psi_list[i] = psi
-        
+
         return psi_list
 
 
@@ -335,7 +354,7 @@ class FisherInterface:
         self._fisher = {}  # Accumulated Fisher matrix
         self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
-        
+
     def _calculate_fisher(self, dataloader):
         """Compute diagonal Fisher Information Matrix"""
         fisher = {}
@@ -346,107 +365,148 @@ class FisherInterface:
         # Get parameters as a dictionary for functional_call
         params = {n: p for n, p in self.named_parameters() if p.requires_grad}
         buffers = {n: b for n, b in self.named_buffers()}
-        
+
         def compute_loss_single(params, buffers, x, y):
             """Compute log likelihood for a single sample"""
             output = functional_call(self, (params, buffers), (x.unsqueeze(0),))
             log_probs = F.log_softmax(output, dim=1)
             log_likelihood = (log_probs * y.unsqueeze(0)).sum()
             return log_likelihood
-        
+
         # Create gradient function and vectorize it
         grad_fn = grad(compute_loss_single)
         grad_fn_vmap = vmap(grad_fn, in_dims=(None, None, 0, 0))
-        
+
         self.eval()
         total_samples = 0
         pbar = tqdm(total=len(dataloader), desc="Fisher", leave=True)
-        
+
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             batch_size = inputs.size(0)
-            
+
             # Compute per-sample gradients (parallelized across batch)
             per_sample_grads = grad_fn_vmap(params, buffers, inputs, targets)
-            
+
             # Accumulate squared gradients
             for n in fisher.keys():
                 fisher[n].data += (per_sample_grads[n] ** 2).sum(dim=0)
-            
+
             total_samples += batch_size
             pbar.update(1)
-        
+
         pbar.close()
-        
+
         # Normalize
         for n in fisher.keys():
             fisher[n] /= total_samples
-        
+
         return fisher
 
+    # def complete_task(self, dataloader):
+    #     """Update Fisher and Bayesian posterior"""
+    #     current_fisher = self._calculate_fisher(dataloader)
+    #     self._theta_star = {
+    #         n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad
+    #     }
+
+    #     if self._first_task:
+    #         self._fisher = current_fisher
+    #         self._first_task = False
+    #     else:
+    #         for n in self._fisher:
+    #             print(f"Norm of self._fisher[{n}]: {torch.norm(self._fisher[n])}")
+    #             print(f"Norm of current_fisher[{n}]: {torch.norm(current_fisher[n])}")
+    #             self._fisher[n] += current_fisher[n]
+
+    def start_task(self, dataloader):
+        pass
+
     def complete_task(self, dataloader):
-        """Update Fisher and Bayesian posterior """
+        """Update Fisher with rescaling to match magnitudes across tasks."""
         current_fisher = self._calculate_fisher(dataloader)
         self._theta_star = {n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad}
-
+        
         if self._first_task:
             self._fisher = current_fisher
             self._first_task = False
         else:
+            # Option 1: Match total norm
+            old_norm = sum(torch.norm(f).item()**2 for f in self._fisher.values())**0.5
+            new_norm = sum(torch.norm(f).item()**2 for f in current_fisher.values())**0.5
+            scale = old_norm / (new_norm + 1e-8)
+            
+            # Option 2: Match mean value
+            # old_mean = torch.cat([f.flatten() for f in self._fisher.values()]).mean()
+            # new_mean = torch.cat([f.flatten() for f in current_fisher.values()]).mean()
+            # scale = old_mean / (new_mean + 1e-8)
+            
+            # Option 3: Match per-layer (more granular)
+            # for n in self._fisher:
+            #     layer_scale = torch.norm(self._fisher[n]) / (torch.norm(current_fisher[n]) + 1e-8)
+            #     current_fisher[n] *= layer_scale
+            
+            # print(f"Rescaling current Fisher by {scale:.4f}")
+            
             for n in self._fisher:
-                self._fisher[n] += current_fisher[n]
+                # self._fisher[n] = torch.max(self._fisher[n], current_fisher[n])
+                self._fisher[n] += scale * current_fisher[n]
 
     # @torch.no_grad()
     # def _compute_gamma(self, layer, i):
     #     if self._first_task:
     #         return torch.zeros((self.bzs, layer.weights.shape[0]))
-        
+
     #     F_weights = self._fisher[f'layers.{i}._weights']
     #     F_bias = self._fisher[f'layers.{i}._bias']
-        
+
     #     weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
     #     bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-        
+
     #     # Gamma: batched, activity-dependent for weights
     #     gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-        
+
     #     # Fisher norm: per-output, no activity or batch sum
     #     fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
     #     fisher_norm = torch.sqrt(fisher_norm)
-        
+
     #     return - self.beta * gamma / fisher_norm
-    
+
     def _compute_gamma(self, layer, i):
         if self._first_task:
             return 0.0
-        
-        F_weights = self._fisher[f'layers.{i}._weights']
-        F_bias = self._fisher[f'layers.{i}._bias']
-        
-        weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-        bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-        
+
+        F_weights = self._fisher[f"layers.{i}._weights"]
+        F_bias = self._fisher[f"layers.{i}._bias"]
+
+        weight_diff = layer._weights - self._theta_star[f"layers.{i}._weights"]
+        bias_diff = layer._bias - self._theta_star[f"layers.{i}._bias"]
+
         gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
 
         if i == len(self.layers) - 1:
-            fisher_norm = torch.sum(F_weights[self.task_masks[self.task_id], :] ** 2, dim=1) + (F_bias[self.task_masks[self.task_id]] ** 2) + 1e-8
+            fisher_norm = (
+                torch.sum(F_weights[self.task_masks[self.task_id], :] ** 2, dim=1)
+                + (F_bias[self.task_masks[self.task_id]] ** 2)
+                + 1e-8
+            )
             gamma = gamma[:, self.task_masks[self.task_id]]
         else:
-            fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
-        
+            fisher_norm = torch.sum(F_weights**2, dim=1) + (F_bias**2) + 1e-8
+
         fisher_norm = torch.sqrt(fisher_norm)
         gamma = -self.beta * gamma / fisher_norm
-        
+
         return gamma
 
     def _compute_fisher_gamma_conv(self, layer, i):
         """
         Compute Fisher-based modulation for convolutional layers.
-        
+
         Args:
             layer: The convolutional layer (e.g., an EFC_Conv_layer instance).
             i (int): Layer index in the network.
-        
+
         Returns:
             torch.Tensor: Modulation term gamma with shape [out_channels].
         """
@@ -455,18 +515,22 @@ class FisherInterface:
         fisher_norm = torch.zeros(out_channels)  # Shape: [out_channels]
 
         for n, p in layer.named_parameters():
-            full_name = f'layers.{i}.{n}'
+            full_name = f"layers.{i}.{n}"
             if p.requires_grad and full_name in self._fisher:
                 base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
-                if 'weight' in n:
+                if "weight" in n:
                     # Weights shape: [out_channels, in_channels, kernel_h, kernel_w]
                     # base_gamma shape: [out_channels, in_channels, kernel_h, kernel_w]
-                    gamma += base_gamma.sum(dim=(1, 2, 3))  # Sum over in_channels and kernel dims
-                    fisher_norm += torch.sum(self._fisher[full_name]**2, dim=(1, 2, 3))
-                elif 'bias' in n:
+                    gamma += base_gamma.sum(
+                        dim=(1, 2, 3)
+                    )  # Sum over in_channels and kernel dims
+                    fisher_norm += torch.sum(
+                        self._fisher[full_name] ** 2, dim=(1, 2, 3)
+                    )
+                elif "bias" in n:
                     # Bias shape: [out_channels]
                     # base_gamma shape: [out_channels]
                     gamma += base_gamma
-                    fisher_norm += self._fisher[full_name]**2
+                    fisher_norm += self._fisher[full_name] ** 2
 
-        return - self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)
+        return -self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)

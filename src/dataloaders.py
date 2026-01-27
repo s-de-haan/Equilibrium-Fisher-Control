@@ -502,7 +502,6 @@ def DomainILMNIST(config):
 def TaskILMNIST(config):
     return TaskILDataloader(config, "MNIST")
 
-
 def ClassILMNIST5Task(config):
     return ClassIL5TaskDataloader(config, "MNIST")
 
