@@ -96,7 +96,6 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
         if mask.any():
             for i, layer in enumerate(self.layers):
                 layer.r[mask] = layer.r_ff[mask]
-            # print(t, f"Not converged samples: {(mask).sum().item()}")
 
     # In EFC_network class
     def _calculate_full_fisher(self, dataloader):
@@ -146,7 +145,7 @@ class EFC_network(Network, JacobianInterface, FisherInterface):
                         torch.sum(F_weights ** 2, dim=1) + F_bias ** 2 + 1e-8
                     )
                 
-                gamma = 0.0 #-beta * gamma / fisher_norm
+                gamma = -beta * gamma / fisher_norm
                 
                 # Forward through layer
                 z = F.linear(h, W, b)
