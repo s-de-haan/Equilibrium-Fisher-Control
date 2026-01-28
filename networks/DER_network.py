@@ -10,7 +10,7 @@ from networks.activation_function import Softplus, Linear
 
 class ReplayBuffer:
     """
-    Replay buffer that stores inputs, labels, AND logits (dark knowledge).
+    Replay buffer that stores inputs, labels, logits (dark knowledge), and task_id.
 
     Uses reservoir sampling to maintain a fixed-size buffer with uniform
     sampling probability across all seen samples.
@@ -20,14 +20,15 @@ class ReplayBuffer:
         self.buffer_size = buffer_size if buffer_size is not None else 500
         self.device = device
 
-        self.buffer_x = None  # Input tensors
-        self.buffer_y = None  # Labels (as class indices)
-        self.buffer_logits = None  # Stored logits (dark knowledge)
+        self.buffer_x = None
+        self.buffer_y = None
+        self.buffer_logits = None
+        self.buffer_task_id = None
 
-        self.num_seen = 0  # Total samples seen (for reservoir sampling)
-        self.current_size = 0  # Current number of samples in buffer
+        self.num_seen = 0
+        self.current_size = 0
 
-    def add(self, x, y, logits):
+    def add(self, x, y, logits, task_id):
         """
         Add samples to buffer using reservoir sampling.
 
@@ -35,6 +36,7 @@ class ReplayBuffer:
             x: Input tensor [batch_size, ...]
             y: Labels [batch_size] (class indices, not one-hot)
             logits: Model outputs [batch_size, num_classes]
+            task_id: Current task ID (for masking MSE on replay)
         """
         batch_size = x.size(0)
 
@@ -48,37 +50,38 @@ class ReplayBuffer:
                 self.buffer_size, dtype=torch.long, device=self.device
             )
             self.buffer_logits = torch.zeros(*logits_shape, device=self.device)
+            self.buffer_task_id = torch.zeros(
+                self.buffer_size, dtype=torch.long, device=self.device
+            )
 
         for i in range(batch_size):
             self.num_seen += 1
 
             if self.current_size < self.buffer_size:
-                # Buffer not full: add directly
                 idx = self.current_size
                 self.current_size += 1
             else:
-                # Buffer full: reservoir sampling
                 idx = np.random.randint(0, self.num_seen)
                 if idx >= self.buffer_size:
-                    continue  # Don't add this sample
+                    continue
 
             self.buffer_x[idx] = x[i].detach()
             self.buffer_y[idx] = (
                 y[i].detach() if y.dim() == 1 else y[i].argmax().detach()
             )
             self.buffer_logits[idx] = logits[i].detach()
+            self.buffer_task_id[idx] = task_id
 
     def sample(self, batch_size):
         """
         Sample a batch from the buffer.
 
         Returns:
-            x, y, logits tensors (or None if buffer is empty)
+            x, y, logits, task_ids tensors (or Nones if buffer is empty)
         """
         if self.current_size == 0:
-            return None, None, None
+            return None, None, None, None
 
-        # Sample indices
         indices = np.random.choice(
             self.current_size, size=min(batch_size, self.current_size), replace=False
         )
@@ -87,6 +90,7 @@ class ReplayBuffer:
             self.buffer_x[indices],
             self.buffer_y[indices],
             self.buffer_logits[indices],
+            self.buffer_task_id[indices],
         )
 
     def __len__(self):
@@ -100,41 +104,32 @@ class DER_network(Network):
     Based on Buzzega et al. (2020) "Dark Experience for General Continual
     Learning: a Strong, Simple Baseline" (NeurIPS 2020).
 
-    Key idea: Store samples along with their logits (dark knowledge) in a
-    replay buffer. During training, replay old samples and use MSE loss
-    between current and stored logits for knowledge distillation.
+    Stores samples along with their logits (dark knowledge) in a replay buffer.
+    During training, replays old samples and uses MSE loss between current and
+    stored logits for knowledge distillation. MSE is computed only on heads that
+    were trained at storage time.
 
     Loss:
         L = L_CE(current_batch) + α * L_MSE(replay_logits, stored_logits)
-
-    This is "DER" from the paper. See DERpp_network for the variant that
-    adds a cross-entropy term on replay samples.
     """
 
     def __init__(self, config, name="DER_network"):
         super().__init__(BP_layer, Softplus, Linear, config, name)
 
-        # DER hyperparameters
-        self.alpha = (
-            getattr(config, "der_alpha", None) or 0.5
-        )  # α: logit distillation weight
-        self.buffer_size = (
-            getattr(config, "buffer_size", None) or 500
-        )  # Replay buffer size
+        self.alpha = getattr(config, "der_alpha", None) or 0.5
+        self.buffer_size = getattr(config, "buffer_size", None) or 500
         self.replay_batch_size = (
             getattr(config, "replay_batch_size", None)
             or getattr(config, "batch_size", None)
             or 64
         )
 
-        # Initialize replay buffer
         self.buffer = ReplayBuffer(self.buffer_size, device=self.device)
 
     def to(self, *args, **kwargs):
         """Override to() to also move buffer tensors to the correct device."""
         self = super().to(*args, **kwargs)
 
-        # Move buffer tensors to the new device
         device = next(self.parameters()).device
         self.buffer.device = device
         if self.buffer.buffer_x is not None:
@@ -143,6 +138,8 @@ class DER_network(Network):
             self.buffer.buffer_y = self.buffer.buffer_y.to(device)
         if self.buffer.buffer_logits is not None:
             self.buffer.buffer_logits = self.buffer.buffer_logits.to(device)
+        if self.buffer.buffer_task_id is not None:
+            self.buffer.buffer_task_id = self.buffer.buffer_task_id.to(device)
 
         return self
 
@@ -155,24 +152,15 @@ class DER_network(Network):
         for layer in self.layers:
             full_output = layer(full_output)
 
-        # Store full output for adding to buffer
         self._full_output = full_output
-
-        # Apply task mask
         x = full_output[:, self.task_masks[self.task_id]]
         self.y_hat = x
         return x
 
     def backward(self, y):
-        """
-        Compute loss with DER replay and backpropagate.
-
-        Also adds current batch to replay buffer.
-        """
-        # Current task loss
+        """Compute loss with DER replay and backpropagate."""
         loss = self.loss_fn(self.y_hat, y)
 
-        # Replay loss (if buffer has samples)
         if self.buffer.current_size > 0:
             replay_loss = self._replay_loss()
             if replay_loss is not None:
@@ -180,30 +168,40 @@ class DER_network(Network):
 
         loss.backward()
 
-        # Add current batch to buffer (with detached logits)
-        # Convert y to class indices if one-hot
         y_indices = y.argmax(dim=1) if y.dim() > 1 and y.size(1) > 1 else y
-        self.buffer.add(self.input, y_indices, self._full_output)
+        self.buffer.add(self.input, y_indices, self._full_output, self.task_id)
 
     def _replay_loss(self):
-        """
-        Compute DER replay loss: MSE between current and stored logits.
-        """
-        # Sample from buffer
-        x_replay, y_replay, logits_stored = self.buffer.sample(self.replay_batch_size)
+        """Compute DER replay loss: MSE between current and stored logits."""
+        x_replay, y_replay, logits_stored, task_ids = self.buffer.sample(
+            self.replay_batch_size
+        )
 
         if x_replay is None:
             return None
 
-        # Forward pass on replay samples
         replay_output = x_replay
         for layer in self.layers:
             replay_output = layer(replay_output)
 
-        # MSE loss between current logits and stored logits (dark knowledge)
-        loss = self.alpha * F.mse_loss(replay_output, logits_stored)
+        # Masked MSE: only on heads trained at storage time
+        total_loss = 0.0
+        count = 0
 
-        return loss
+        for i in range(replay_output.size(0)):
+            stored_task = task_ids[i].item()
+            num_trained_heads = (stored_task + 1) * self.classes_per_task
+
+            mse = F.mse_loss(
+                replay_output[i, :num_trained_heads],
+                logits_stored[i, :num_trained_heads],
+            )
+            total_loss += mse
+            count += 1
+
+        if count > 0:
+            return self.alpha * (total_loss / count)
+        return None
 
     def complete_task(self, dataloader=None):
         """Called after task completion (interface compatibility)."""
@@ -227,33 +225,26 @@ class DERpp_network(Network):
     Loss:
         L = L_CE(current) + α * L_MSE(replay_logits, stored_logits)
                          + β * L_CE(replay_labels)
-
-    The additional CE term helps maintain decision boundaries.
     """
 
     def __init__(self, config, name="DERpp_network"):
         super().__init__(BP_layer, Softplus, Linear, config, name)
 
-        # DER++ hyperparameters
-        self.alpha = (
-            getattr(config, "der_alpha", None) or 0.5
-        )  # α: logit distillation weight
-        self.beta = getattr(config, "der_beta", None) or 0.5  # β: replay CE weight
-        self.buffer_size = getattr(config, "buffer_size", None) or 200
+        self.alpha = getattr(config, "der_alpha", None) or 0.5
+        self.beta = getattr(config, "der_beta", None) or 0.5
+        self.buffer_size = getattr(config, "buffer_size", None) or 500
         self.replay_batch_size = (
             getattr(config, "replay_batch_size", None)
             or getattr(config, "batch_size", None)
             or 64
         )
 
-        # Initialize replay buffer
         self.buffer = ReplayBuffer(self.buffer_size, device=self.device)
 
     def to(self, *args, **kwargs):
         """Override to() to also move buffer tensors to the correct device."""
         self = super().to(*args, **kwargs)
 
-        # Move buffer tensors to the new device
         device = next(self.parameters()).device
         self.buffer.device = device
         if self.buffer.buffer_x is not None:
@@ -262,6 +253,8 @@ class DERpp_network(Network):
             self.buffer.buffer_y = self.buffer.buffer_y.to(device)
         if self.buffer.buffer_logits is not None:
             self.buffer.buffer_logits = self.buffer.buffer_logits.to(device)
+        if self.buffer.buffer_task_id is not None:
+            self.buffer.buffer_task_id = self.buffer.buffer_task_id.to(device)
 
         return self
 
@@ -281,10 +274,8 @@ class DERpp_network(Network):
 
     def backward(self, y):
         """Compute loss with DER++ replay and backpropagate."""
-        # Current task loss
         loss = self.loss_fn(self.y_hat, y)
 
-        # Replay losses
         if self.buffer.current_size > 0:
             replay_loss = self._replay_loss()
             if replay_loss is not None:
@@ -292,28 +283,38 @@ class DERpp_network(Network):
 
         loss.backward()
 
-        # Add current batch to buffer
         y_indices = y.argmax(dim=1) if y.dim() > 1 and y.size(1) > 1 else y
-        self.buffer.add(self.input, y_indices, self._full_output)
+        self.buffer.add(self.input, y_indices, self._full_output, self.task_id)
 
     def _replay_loss(self):
-        """
-        Compute DER++ replay loss: MSE on logits + CE on labels.
-        """
-        x_replay, y_replay, logits_stored = self.buffer.sample(self.replay_batch_size)
+        """Compute DER++ replay loss: MSE on logits + CE on labels."""
+        x_replay, y_replay, logits_stored, task_ids = self.buffer.sample(
+            self.replay_batch_size
+        )
 
         if x_replay is None:
             return None
 
-        # Forward pass on replay samples
         replay_output = x_replay
         for layer in self.layers:
             replay_output = layer(replay_output)
 
-        # MSE loss on logits (dark knowledge distillation)
-        loss_mse = self.alpha * F.mse_loss(replay_output, logits_stored)
+        # Masked MSE: only on heads trained at storage time
+        total_mse = 0.0
+        count = 0
 
-        # CE loss on labels (maintain decision boundaries)
+        for i in range(replay_output.size(0)):
+            stored_task = task_ids[i].item()
+            num_trained_heads = (stored_task + 1) * self.classes_per_task
+
+            mse = F.mse_loss(
+                replay_output[i, :num_trained_heads],
+                logits_stored[i, :num_trained_heads],
+            )
+            total_mse += mse
+            count += 1
+
+        loss_mse = self.alpha * (total_mse / count) if count > 0 else 0.0
         loss_ce = self.beta * F.cross_entropy(replay_output, y_replay)
 
         return loss_mse + loss_ce
