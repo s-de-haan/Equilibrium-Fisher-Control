@@ -438,46 +438,13 @@ class FisherInterface:
             self._fisher = current_fisher
             self._first_task = False
         else:
-            # Option 1: Match total norm
             old_norm = sum(torch.norm(f).item()**2 for f in self._fisher.values())**0.5
             new_norm = sum(torch.norm(f).item()**2 for f in current_fisher.values())**0.5
             scale = old_norm / (new_norm + 1e-8)
             
-            # Option 2: Match mean value
-            # old_mean = torch.cat([f.flatten() for f in self._fisher.values()]).mean()
-            # new_mean = torch.cat([f.flatten() for f in current_fisher.values()]).mean()
-            # scale = old_mean / (new_mean + 1e-8)
-            
-            # Option 3: Match per-layer (more granular)
-            # for n in self._fisher:
-            #     layer_scale = torch.norm(self._fisher[n]) / (torch.norm(current_fisher[n]) + 1e-8)
-            #     current_fisher[n] *= layer_scale
-            
-            # print(f"Rescaling current Fisher by {scale:.4f}")
-            
             for n in self._fisher:
-                # self._fisher[n] = torch.max(self._fisher[n], current_fisher[n])
                 self._fisher[n] += scale * current_fisher[n]
 
-    # @torch.no_grad()
-    # def _compute_gamma(self, layer, i):
-    #     if self._first_task:
-    #         return torch.zeros((self.bzs, layer.weights.shape[0]))
-
-    #     F_weights = self._fisher[f'layers.{i}._weights']
-    #     F_bias = self._fisher[f'layers.{i}._bias']
-
-    #     weight_diff = layer._weights - self._theta_star[f'layers.{i}._weights']
-    #     bias_diff = layer._bias - self._theta_star[f'layers.{i}._bias']
-
-    #     # Gamma: batched, activity-dependent for weights
-    #     gamma = (layer.r_prev @ (F_weights * weight_diff).T) + (F_bias * bias_diff)
-
-    #     # Fisher norm: per-output, no activity or batch sum
-    #     fisher_norm = torch.sum(F_weights ** 2, dim=1) + (F_bias ** 2) + 1e-8
-    #     fisher_norm = torch.sqrt(fisher_norm)
-
-    #     return - self.beta * gamma / fisher_norm
 
     def _compute_gamma(self, layer, i):
         if self._first_task:
@@ -504,41 +471,4 @@ class FisherInterface:
         fisher_norm = torch.sqrt(fisher_norm)
         gamma = -self.beta * gamma / fisher_norm
 
-
         return gamma
-
-    def _compute_fisher_gamma_conv(self, layer, i):
-        """
-        Compute Fisher-based modulation for convolutional layers.
-
-        Args:
-            layer: The convolutional layer (e.g., an EFC_Conv_layer instance).
-            i (int): Layer index in the network.
-
-        Returns:
-            torch.Tensor: Modulation term gamma with shape [out_channels].
-        """
-        out_channels = layer.out_channels  # Number of output channels
-        gamma = torch.zeros(out_channels)  # Shape: [out_channels]
-        fisher_norm = torch.zeros(out_channels)  # Shape: [out_channels]
-
-        for n, p in layer.named_parameters():
-            full_name = f"layers.{i}.{n}"
-            if p.requires_grad and full_name in self._fisher:
-                base_gamma = self._fisher[full_name] * (p - self._theta_star[full_name])
-                if "weight" in n:
-                    # Weights shape: [out_channels, in_channels, kernel_h, kernel_w]
-                    # base_gamma shape: [out_channels, in_channels, kernel_h, kernel_w]
-                    gamma += base_gamma.sum(
-                        dim=(1, 2, 3)
-                    )  # Sum over in_channels and kernel dims
-                    fisher_norm += torch.sum(
-                        self._fisher[full_name] ** 2, dim=(1, 2, 3)
-                    )
-                elif "bias" in n:
-                    # Bias shape: [out_channels]
-                    # base_gamma shape: [out_channels]
-                    gamma += base_gamma
-                    fisher_norm += self._fisher[full_name] ** 2
-
-        return -self.beta * gamma / (torch.sqrt(fisher_norm) + 1e-8)

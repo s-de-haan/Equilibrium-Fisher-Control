@@ -223,7 +223,7 @@ class DERpp_network(Network):
             getattr(config, "der_alpha", None) or 0.5
         )  # α: logit distillation weight
         self.beta = getattr(config, "der_beta", None) or 0.5  # β: replay CE weight
-        self.buffer_size = getattr(config, "buffer_size", None) or 500
+        self.buffer_size = getattr(config, "buffer_size", None) or 200
         self.replay_batch_size = (
             getattr(config, "replay_batch_size", None)
             or getattr(config, "batch_size", None)
