@@ -7,13 +7,9 @@ This project uses:
 - **PyTorch:** 2.6.0  
 - **torchvision:** 0.21.0  
 
-Please follow the instructions below to install the required dependencies, initialize WandB, run hyperparameter sweeps, and launch agents across multiple GPUs.
+Please follow the instructions below to install the required dependencies, initialize WandB, run hyperparameter sweeps, and launch agents across multiple GPUs. We also provide a script to run any of the results we present in the table. 
 
 ---
-
-So its the EFC_BP_Network, and what you will see is that there is no more alpha_di, no more tau, and no more target_lr.
-
-Now we have lr=0.001 for comparison purposes and to ensure no underfitting. We need to sweep over psi_lr, beta, eps (which now should be no less than 1e-3)
 
 ## Installation
 
@@ -53,53 +49,21 @@ Now we have lr=0.001 for comparison purposes and to ensure no underfitting. We n
     ```
     and paste your API key when prompted.
 
-## Launching a Sweep
-This project supports hyperparameter sweeps via WandB. We use CLI arguments (via argparse) to define hyperparameters, and the sweep configuration will override these defaults.
-1. **Prepare Your Sweep Config YAML:**
-    For example, create a YAML config file  that specifies your hyperparameter ranges (for reference, check `configs/sweep_grid.yaml`).
 
-2. **Initialize the Sweep:**
-    Run the following command (replace <project-name> with your WandB project name):
+## Reproduce Paper Results 
 
-    ```
-    wandb sweep --project <project-name> configs/sweep_grid.yaml
-    ```
-    This command will output a sweep ID (formatted as entity/project/sweep_ID).
+Every hyperparameters configuration of all models & training setting presented in the paper are in the `./final_configs` folder, organized by method. These config files are however *"wandb sweep"* config files, so in case you'd want to run a single one of them, please use the `./final_configs/single_run_template.yaml` template (see 1.). Alternatively, if you'd like to reproduce any result accross 5 seeds as we do in the paper, follow 2.,  
 
-## Launching Agents Across Multiple GPUs
-To run multiple sweep agents on different GPUs, use the provided start_processes_on_gpu.py script. This script will:
+1. **Run a single model with specific hyperparameters**
 
-- Check the available VRAM on the specified GPUs.
-- Cycle through the GPUs in a round-robin fashion, assigning agents only to those with sufficient free VRAM.
+`WANDB_MODE=disabled python train.py --config configs/single_run.yaml`
 
-Launch agents using the command:
-```
-wandb agent <sweep_id>
-```
+To enable WANDB, simply run with `WANDD_MODE=enabled`. 
 
-Gracefully cancel the sweep when you press Ctrl+C by triggering:
+2. **Reproduce results accross 5 seeds**
 
-```
-wandb sweep --cancel <sweep_id>
-```
+`python start_processes_on_gpu.py --config final_configs/<method>/<setting>.yaml`
 
-1. **Example Usage**:
-    To launch 5 agents on GPUs 0, 1, and 2 with a minimum free VRAM threshold of 2500 MiB, run:
+If you have multiple (e.g. 4) GPUs, you can parallelize a run as such: 
 
-    ```
-    python start_processes_on_gpu.py <sweep_id> 5 0 1 2 --min_free_vram 2500
-    ```
-
-    Replace <sweep_id> with the sweep ID returned from the previous step.
-
-    When you press Ctrl+C, the script will terminate the launched agents and automatically cancel the sweep.
-
-2. **Running a Single Training Run (for Debugging or Local Experiments)**:
-    If you want to run a single training job (outside of a sweep), execute:
-
-    ```
-    python train.py --layers 784 400 400 2 --lr 1.5e-6 --batch_size 128 --epochs 20 --optimizer Adam --scheduler CosineAnnealingLR --device cuda --seed 1337 --beta_efc 5.0 --target_lr 0.01 --alpha_di 1e-4 --importance_ewc 1.0 --method efc --dt_di 0.008 --time_constant_ratio 0.2 --tmax_di 500 --k_p 2.0 --eps 1e-4 --save false
-    ```
-
-    Any parameters not provided will use the default values defined in train.py.
-
+`python start_processes_on_gpu.py 0 1 2 3 --config final_configs/<method>/<setting>.yaml`
