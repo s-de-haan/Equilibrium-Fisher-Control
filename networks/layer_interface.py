@@ -28,7 +28,7 @@ class Layer(nn.Module):
     @property
     def activation_derivative(self):
         return self.activation_fn.derivative
-    
+
     def _create_init_layer(self):
         self.feedforward = nn.Sequential(
             nn.Linear(self.in_features, self.out_features), self.activation_fn

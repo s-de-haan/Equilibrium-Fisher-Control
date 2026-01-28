@@ -7,6 +7,7 @@ from torch.func import functional_call, vmap, grad
 from networks.layers import *
 
 
+
 class Network(nn.Module):
     def __init__(self, layer_class, activation_fn, out_activation_fn, config, name):
         super().__init__()
@@ -19,6 +20,7 @@ class Network(nn.Module):
         self.lr = config.lr
         self.name = name
         self.setting = config.setting
+
 
         # Setup task masks for continual learning
         self.num_tasks = getattr(config, "num_tasks", 5)
@@ -38,6 +40,7 @@ class Network(nn.Module):
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(start_idx, end_idx)
 
+
                 # Complement: all other tasks
                 complement_indices = list(range(0, start_idx)) + list(
                     range(end_idx, self.num_tasks * self.classes_per_task)
@@ -49,11 +52,13 @@ class Network(nn.Module):
                 end_idx = (task_id + 1) * self.classes_per_task
                 self.task_masks[task_id] = slice(0, end_idx)
 
+
                 # Complement: future classes only
                 complement_indices = list(
                     range(end_idx, self.num_tasks * self.classes_per_task)
                 )
                 self.task_masks_complement[task_id] = complement_indices
+
 
             else:  # domainIL
                 # Domain IL: all outputs (no masking)
@@ -165,6 +170,7 @@ class Network(nn.Module):
         return fisher
 
 
+
 class JacobianInterface:
     def __init__(self, config):
         if config.mode == "ndi":
@@ -240,10 +246,12 @@ class JacobianInterface:
         x = self.input.detach().requires_grad_(True)
         activations_with_grad = []
 
+
         for layer in self.layers:
             x = layer.forward(x)
             x.retain_grad()
             activations_with_grad.append(x)
+
 
         y = activations_with_grad[-1]
         y = y[:, self.task_masks[self.task_id]]
@@ -326,6 +334,7 @@ class JacobianInterface:
 
         return torch.cat(Js, dim=2), Js
 
+
     @torch.no_grad()
     def _calculate_psis(self, u):
         L = len(self.layers)
@@ -342,10 +351,12 @@ class JacobianInterface:
         psi = full_u * activations_derivatives[-1]
         psi_list[-1] = psi
 
+
         # Backward from second-to-last to first
         for i in range(L - 2, -1, -1):
             psi = (psi @ self.layers[i + 1].weights) * activations_derivatives[i]
             psi_list[i] = psi
+
 
         return psi_list
 
@@ -355,6 +366,7 @@ class FisherInterface:
         self._fisher = {}  # Accumulated Fisher matrix
         self._theta_star = {}  # Latest parameter optima (theta_T^*)
         self._first_task = True
+
 
     def _calculate_fisher(self, dataloader):
         """Compute diagonal Fisher Information Matrix"""
@@ -367,6 +379,7 @@ class FisherInterface:
         params = {n: p for n, p in self.named_parameters() if p.requires_grad}
         buffers = {n: b for n, b in self.named_buffers()}
 
+
         def compute_loss_single(params, buffers, x, y):
             """Compute log likelihood for a single sample"""
             output = functional_call(self, (params, buffers), (x.unsqueeze(0),))
@@ -374,33 +387,42 @@ class FisherInterface:
             log_likelihood = (log_probs * y.unsqueeze(0)).sum()
             return log_likelihood
 
+
         # Create gradient function and vectorize it
         grad_fn = grad(compute_loss_single)
         grad_fn_vmap = vmap(grad_fn, in_dims=(None, None, 0, 0))
+
 
         self.eval()
         total_samples = 0
         pbar = tqdm(total=len(dataloader), desc="Fisher", leave=True)
 
+
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(self.device), targets.to(self.device)
             batch_size = inputs.size(0)
 
+
             # Compute per-sample gradients (parallelized across batch)
             per_sample_grads = grad_fn_vmap(params, buffers, inputs, targets)
+
 
             # Accumulate squared gradients
             for n in fisher.keys():
                 fisher[n].data += (per_sample_grads[n] ** 2).sum(dim=0)
 
+
             total_samples += batch_size
             pbar.update(1)
 
+
         pbar.close()
+
 
         # Normalize
         for n in fisher.keys():
             fisher[n] /= total_samples
+
 
         return fisher
 
@@ -497,6 +519,7 @@ class FisherInterface:
 
         fisher_norm = torch.sqrt(fisher_norm)
         gamma = -self.beta * gamma / fisher_norm
+
 
         return gamma
 

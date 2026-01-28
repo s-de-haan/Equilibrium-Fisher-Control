@@ -3,7 +3,8 @@ import torch
 from networks.network_interface import *
 from networks.layers import BP_layer
 from networks.activation_function import ReLU, Linear, Softplus
-        
+
+
 class EWC_network(Network, FisherInterface):
     def __init__(self, config, name="EWC_network"):
         Network.__init__(self, BP_layer, Softplus, Linear, config, name)
@@ -20,7 +21,7 @@ class EWC_network(Network, FisherInterface):
     def ewc_loss(self):
         """Compute EWC regularization loss"""
         loss = 0.0
-        
+
         for n, p in self.named_parameters():
             if n in self._theta_star and n in self._fisher:
                 loss += torch.sum(self._fisher[n] * (p - self._theta_star[n]) ** 2)

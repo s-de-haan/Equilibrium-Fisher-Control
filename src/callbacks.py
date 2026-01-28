@@ -146,7 +146,7 @@ class CallbackHandler:
 
     def on_task_begin(self, training_config, **kwargs):
         self.call_event("on_task_begin", training_config, **kwargs)
-    
+
     def on_task_end(self, training_config, **kwargs):
         self.call_event("on_task_end", training_config, **kwargs)
 
