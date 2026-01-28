@@ -426,22 +426,6 @@ class FisherInterface:
 
         return fisher
 
-    # def complete_task(self, dataloader):
-    #     """Update Fisher and Bayesian posterior"""
-    #     current_fisher = self._calculate_fisher(dataloader)
-    #     self._theta_star = {
-    #         n: p.data.clone() for n, p in self.named_parameters() if p.requires_grad
-    #     }
-
-    #     if self._first_task:
-    #         self._fisher = current_fisher
-    #         self._first_task = False
-    #     else:
-    #         for n in self._fisher:
-    #             print(f"Norm of self._fisher[{n}]: {torch.norm(self._fisher[n])}")
-    #             print(f"Norm of current_fisher[{n}]: {torch.norm(current_fisher[n])}")
-    #             self._fisher[n] += current_fisher[n]
-
     def start_task(self, dataloader):
         pass
 
