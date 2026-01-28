@@ -4,6 +4,7 @@ import torch.nn as nn
 
 class ActivationFunction(nn.Module):
     """Base class for activation functions with derivatives."""
+
     def forward(self, x):
         raise NotImplementedError
 
@@ -37,12 +38,14 @@ class Linear(ActivationFunction):
     def derivative(self, x):
         return torch.ones_like(x)
 
+
 class Tanh(ActivationFunction):
     def forward(self, x):
         return torch.tanh(x)
 
     def derivative(self, x):
         return 1 - torch.tanh(x) ** 2
+
 
 class Softplus(ActivationFunction):
     def __init__(self):
@@ -51,7 +54,7 @@ class Softplus(ActivationFunction):
         self.beta = 1
         self.softplus = nn.Softplus(beta=self.beta)
         self.sigmoid = nn.Sigmoid()
-    
+
     def set_modulation(self, modulation):
         self.modulation = modulation
 
@@ -60,6 +63,6 @@ class Softplus(ActivationFunction):
 
     def forward(self, x):
         return self.softplus(x)
-    
+
     def derivative(self, x):
         return self.sigmoid(self.beta * x) * self.modulation

@@ -17,7 +17,7 @@ class MNIST:
             ]
         )
         self.train_dataset = datasets.MNIST(
-            root="data", train=True, transform=transform, download=True 
+            root="data", train=True, transform=transform, download=True
         )
         self.test_dataset = datasets.MNIST(
             root="data", train=False, transform=transform, download=True
@@ -72,6 +72,7 @@ class MNIST:
             shuffle=False,
         )
         return train_loader, test_loader
+
 
 class BaseDatasetWrapper(Dataset):
     """Base wrapper for converting datasets to tensor format."""
@@ -215,25 +216,31 @@ class BaseContinualDataloader:
         """Pre-compute indices for each task to avoid repeated filtering."""
         self.task_train_indices = {}
         self.task_test_indices = {}
-        
+
         for task_id in range(self.num_tasks):
             task_classes = self.tasks[task_id]
-            
+
             # Pre-filter train indices
             self.task_train_indices[task_id] = [
-                i for i, target in enumerate(self.train_dataset.targets)
+                i
+                for i, target in enumerate(self.train_dataset.targets)
                 if target in task_classes
             ]
-            
-            # Pre-filter test indices  
+
+            # Pre-filter test indices
             self.task_test_indices[task_id] = [
-                i for i, target in enumerate(self.test_dataset.targets)
+                i
+                for i, target in enumerate(self.test_dataset.targets)
                 if target in task_classes
             ]
 
     def _get_task_subset(self, is_train, task_id):
         """Get dataset subset for a specific task using pre-computed indices."""
-        indices = self.task_train_indices[task_id] if is_train else self.task_test_indices[task_id]
+        indices = (
+            self.task_train_indices[task_id]
+            if is_train
+            else self.task_test_indices[task_id]
+        )
         dataset = self.train_dataset if is_train else self.test_dataset
         return Subset(dataset, indices)
 
@@ -331,7 +338,7 @@ class TaskILDataloader(BaseContinualDataloader):
         classes = self.tasks[task_id]
 
         # Filter datasets
-        train_dataset = self._get_task_subset(is_train=True, task_id=task_id) 
+        train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
         test_dataset = self._get_task_subset(is_train=False, task_id=task_id)
 
         # Process data with binary remapping (same as Domain IL)
@@ -381,13 +388,15 @@ class ClassILDataloader(BaseContinualDataloader):
         num_classes_so_far = (task_id + 1) * self.classes_per_task
 
         train_data, train_targets = self._process_data(
-            train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            train_dataset,
+            self.tasks[task_id],
+            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item(),
         )
 
         test_data, test_targets = self._process_data(
-            test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            test_dataset,
+            all_classes_so_far,
+            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item(),
         )
 
         train_tensor_dataset = TensorDataset(
@@ -405,7 +414,7 @@ class ClassILDataloader(BaseContinualDataloader):
 
 class ClassIL5TaskDataloader(BaseContinualDataloader):
     """5-task Class Incremental Learning dataloader (2 classes per task)."""
-    
+
     def __init__(self, config, dataset_name="MNIST"):
         super().__init__(config, dataset_name)
         self.num_tasks = 5
@@ -415,7 +424,7 @@ class ClassIL5TaskDataloader(BaseContinualDataloader):
         all_classes_so_far = []
         for i in range(task_id + 1):
             all_classes_so_far.extend(self.tasks[i])
-        
+
         # Training: only current task
         train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
         # Testing: all seen classes so far
@@ -423,13 +432,15 @@ class ClassIL5TaskDataloader(BaseContinualDataloader):
         num_classes_so_far = (task_id + 1) * self.classes_per_task
 
         train_data, train_targets = self._process_data(
-            train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            train_dataset,
+            self.tasks[task_id],
+            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item(),
         )
 
         test_data, test_targets = self._process_data(
-            test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            test_dataset,
+            all_classes_so_far,
+            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item(),
         )
 
         train_tensor_dataset = TensorDataset(
@@ -447,25 +458,25 @@ class ClassIL5TaskDataloader(BaseContinualDataloader):
 
 class ClassIL2TaskDataloader(BaseContinualDataloader):
     """2-task Class Incremental Learning dataloader (5 classes per task)."""
-    
+
     def __init__(self, config, dataset_name="MNIST"):
         # Set task configuration before calling super()
         self.num_tasks = 2
         self.classes_per_task = 5
         super().__init__(config, dataset_name)
-        
+
     def _define_tasks(self):
         """Override to define 2 tasks with 5 classes each."""
         self.tasks = [
             [0, 1, 2, 3, 4],  # Task 0: first 5 digits
-            [5, 6, 7, 8, 9]   # Task 1: second 5 digits
+            [5, 6, 7, 8, 9],  # Task 1: second 5 digits
         ]
 
     def get_dataloaders(self, task_id):
         all_classes_so_far = []
         for i in range(task_id + 1):
             all_classes_so_far.extend(self.tasks[i])
-        
+
         # Training: only current task
         train_dataset = self._get_task_subset(is_train=True, task_id=task_id)
         # Testing: all seen classes so far
@@ -473,13 +484,15 @@ class ClassIL2TaskDataloader(BaseContinualDataloader):
         num_classes_so_far = (task_id + 1) * self.classes_per_task
 
         train_data, train_targets = self._process_data(
-            train_dataset, self.tasks[task_id],
-            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item()
+            train_dataset,
+            self.tasks[task_id],
+            lambda i: self.train_dataset.targets[train_dataset.indices[i]].item(),
         )
 
         test_data, test_targets = self._process_data(
-            test_dataset, all_classes_so_far,
-            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item()
+            test_dataset,
+            all_classes_so_far,
+            lambda i: self.test_dataset.targets[test_dataset.indices[i]].item(),
         )
 
         train_tensor_dataset = TensorDataset(
@@ -499,20 +512,26 @@ class ClassIL2TaskDataloader(BaseContinualDataloader):
 def DomainILMNIST(config):
     return DomainILDataloader(config, "MNIST")
 
+
 def TaskILMNIST(config):
     return TaskILDataloader(config, "MNIST")
+
 
 def ClassILMNIST5Task(config):
     return ClassIL5TaskDataloader(config, "MNIST")
 
+
 def ClassILMNIST2Task(config):
     return ClassIL2TaskDataloader(config, "MNIST")
+
 
 def TaskILCIFAR10(config):
     return TaskILDataloader(config, "CIFAR10")
 
+
 def ClassILCIFAR105Task(config):
     return ClassIL5TaskDataloader(config, "CIFAR10")
+
 
 def ClassILCIFAR102Task(config):
     return ClassIL2TaskDataloader(config, "CIFAR10")

@@ -6,6 +6,7 @@ from networks.activation_function import *
 
 check_nan = lambda x: torch.isnan(x).any().item()
 
+
 class DFC_network(Network, JacobianInterface):
     def __init__(self, config, name="DFC_network") -> None:
         Network.__init__(self, DFC_layer, ReLU, Linear, config, name)
@@ -70,8 +71,10 @@ class DFC_network(Network, JacobianInterface):
             if converged_mask.all():
                 break
 
-            error = self._compute_error(r_current[-1][:, self.task_masks[self.task_id]], self.targets)
-            
+            error = self._compute_error(
+                r_current[-1][:, self.task_masks[self.task_id]], self.targets
+            )
+
             # Proportional and integral (PI) control.
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
             u_next = u_int_next + self.k_p * error
@@ -80,25 +83,34 @@ class DFC_network(Network, JacobianInterface):
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
 
             _, Js = self._calculate_full_jacobian()
-            
+
             # Iterate over layers with control signal
             for i, layer in enumerate(self.layers):
                 r_prev = r_current[i - 1] if i != 0 else self.input
 
                 # Basal and apical
                 v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
-                v_fb_current[i] = torch.bmm(Js[i][:, self.task_masks[self.task_id], :].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
-                
+                v_fb_current[i] = torch.bmm(
+                    Js[i][:, self.task_masks[self.task_id], :].transpose(1, 2),
+                    u_next.unsqueeze(2),
+                ).squeeze(2)
+
                 # Soma with apical
                 tau = self.dt / self.time_constant_ratio
                 if i == len(self.layers) - 1:
                     task_slice = self.task_masks[self.task_id]
                     v_update = torch.zeros_like(v_current[i])
-                    v_update[:, task_slice] = tau * (v_fb_current[i][:, task_slice] + v_ff_current[i][:, task_slice] - v_current[i][:, task_slice])
+                    v_update[:, task_slice] = tau * (
+                        v_fb_current[i][:, task_slice]
+                        + v_ff_current[i][:, task_slice]
+                        - v_current[i][:, task_slice]
+                    )
                     v_current[i] += v_update
                 else:
-                    v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i])
-                
+                    v_current[i] += tau * (
+                        v_fb_current[i] + v_ff_current[i] - v_current[i]
+                    )
+
                 r_current[i] = layer.activation_fn(v_current[i])
 
                 layer.v_ff = v_current[i]
@@ -129,21 +141,25 @@ class DFC_Mult_network(Network, JacobianInterface, FisherInterface):
 
         for _ in range(1, self.tmax):
             error = self._compute_error(self.layers[-1].r, self.targets)
-            
+
             # Proportional control
             u_next = self.k_p * error
             psis = self._calculate_psis(u_next)
 
             # Forward pass
             for i, layer in enumerate(self.layers):
-                layer.r_prev = self.layers[i-1].r if i != 0 else self.input
-                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+                layer.r_prev = self.layers[i - 1].r if i != 0 else self.input
+                layer.v_ff = layer.r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(
+                    0
+                )
                 layer.r_ff = layer.activation_fn(layer.v_ff)
-                
+
                 psi = psis[i]
                 e_psi = torch.tanh(psi) + 1
 
-                layer.r = layer.r + self.dt / self.time_constant_ratio * (e_psi * layer.r_ff - layer.r)
+                layer.r = layer.r + self.dt / self.time_constant_ratio * (
+                    e_psi * layer.r_ff - layer.r
+                )
 
             # Compute convergence check
             converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps

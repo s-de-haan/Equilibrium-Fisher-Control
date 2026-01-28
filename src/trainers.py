@@ -39,7 +39,9 @@ class TrainerInterface:
 
         self.callback_handler.on_train_begin(training_config=self.config)
 
-        config_details = "\n".join([f" - {key}: {value}" for key, value in config.items()])
+        config_details = "\n".join(
+            [f" - {key}: {value}" for key, value in config.items()]
+        )
         logger.info(msg=f"Training:\n{config_details}\n - model: {self.model.name}\n")
 
     def _set_device(self, device: str):
@@ -97,7 +99,7 @@ class TrainerInterface:
                 self.model.parameters(),
                 lr=self.config["lr"],
                 betas=(0.9, 0.999),
-                eps=5.83238643406511e-07
+                eps=5.83238643406511e-07,
             )
         elif self.config.optimizer == "SGD":
             self.optimizer = torch.optim.SGD(
@@ -189,14 +191,13 @@ class TrainerInterface:
 
             if epoch_loss != epoch_loss:
                 raise ArithmeticError("NaN detected in train loss")
-            
+
             self.callback_handler.on_train_step_end(training_config=self.config)
 
         epoch_loss /= len(self.train_loader)
 
         return epoch_loss
-    
-    
+
     @torch.no_grad()
     def _test_step(self, epoch, task_id):
         self.callback_handler.on_test_step_begin(
@@ -217,7 +218,7 @@ class TrainerInterface:
             y = y.to(self.device)
 
             y_hat = self.model(X)
-            
+
             loss = self.model.loss_fn(y_hat, y)
 
             epoch_loss += loss.item()
@@ -226,14 +227,14 @@ class TrainerInterface:
 
             if epoch_loss != epoch_loss:
                 raise ArithmeticError("NaN detected in test loss")
-            
+
             self.callback_handler.on_test_step_end(training_config=self.config)
 
         epoch_loss /= len(self.test_loader)
         accuracy = 100 * correct / total
 
         return epoch_loss, accuracy
-    
+
 
 class Trainer(TrainerInterface):
     def __init__(self, model, train_loader, test_loader, config, callbacks=None):
@@ -279,8 +280,8 @@ class TrainerCL(TrainerInterface):
         self.tasks_dataloaders = tasks_dataloaders
 
         # Peak model tracking
-        self.use_peak = config.get('peak', False)
-        self.best_cumulative_accuracy = -float('inf')
+        self.use_peak = config.get("peak", False)
+        self.best_cumulative_accuracy = -float("inf")
         self.best_model_state = None
         self.peak_epoch = 0
 
@@ -293,7 +294,7 @@ class TrainerCL(TrainerInterface):
 
             self.train_loader = train_loader
             self.test_loader = test_loader
-            
+
             self.callback_handler.on_task_begin(
                 training_config=self.config, task_id=task_id + 1
             )
@@ -305,16 +306,16 @@ class TrainerCL(TrainerInterface):
 
             # Reset peak tracking for current task
             if self.use_peak and task_id > 0:
-                self.best_cumulative_accuracy = -float('inf')
+                self.best_cumulative_accuracy = -float("inf")
                 self.best_model_state = None
                 self.peak_epoch = 0
 
             for epoch in range(1, self.config.epochs + 1):
                 self.callback_handler.on_epoch_begin(
-                    training_config=self.config, 
-                    epoch=epoch, 
-                    train_loader=self.train_loader, 
-                    test_loader=self.test_loader
+                    training_config=self.config,
+                    epoch=epoch,
+                    train_loader=self.train_loader,
+                    test_loader=self.test_loader,
                 )
 
                 epoch_train_loss = self._train_step(epoch)
@@ -324,8 +325,8 @@ class TrainerCL(TrainerInterface):
                     if self.config.setting in ["classIL5task", "classIL2task"]:
                         epoch_test_loss, accuracy = self._test_step(epoch, task_id)
                         # Get per-task metrics from instance variables
-                        task_losses = getattr(self, 'current_task_losses', [])
-                        task_accuracies = getattr(self, 'current_task_accuracies', [])
+                        task_losses = getattr(self, "current_task_losses", [])
+                        task_accuracies = getattr(self, "current_task_accuracies", [])
                         metrics.task_losses = task_losses
                         metrics.task_accuracies = task_accuracies
                         metrics.cumulative_accuracy = accuracy
@@ -334,9 +335,13 @@ class TrainerCL(TrainerInterface):
                         if self.use_peak and task_id > 0:
                             if accuracy > self.best_cumulative_accuracy:
                                 self.best_cumulative_accuracy = accuracy
-                                self.best_model_state = copy.deepcopy(self.model.state_dict())
+                                self.best_model_state = copy.deepcopy(
+                                    self.model.state_dict()
+                                )
                                 self.peak_epoch = epoch
-                                logger.info(f"New peak model saved at epoch {epoch} with cumulative accuracy: {accuracy:.2f}%")
+                                logger.info(
+                                    f"New peak model saved at epoch {epoch} with cumulative accuracy: {accuracy:.2f}%"
+                                )
                     else:
                         epoch_test_loss, accuracy = self._test_step(epoch, task_id)
 
@@ -353,7 +358,9 @@ class TrainerCL(TrainerInterface):
 
             # Restore peak model before completing task (if applicable)
             if self.use_peak and task_id > 0 and self.best_model_state is not None:
-                logger.info(f"Restoring peak model from epoch {self.peak_epoch} with cumulative accuracy {self.best_cumulative_accuracy:.2f}%")
+                logger.info(
+                    f"Restoring peak model from epoch {self.peak_epoch} with cumulative accuracy {self.best_cumulative_accuracy:.2f}%"
+                )
                 self.model.load_state_dict(self.best_model_state)
 
             # Test on all seen tasks
@@ -365,14 +372,14 @@ class TrainerCL(TrainerInterface):
             if isinstance(self.model, FisherInterface):
                 self.model.complete_task(train_loader)
             self._set_optimizer()
-            
+
         if self.save:
             self._save_model()
 
     def _test_seen_tasks(self, current_task_id):
         if self.config.setting in ["classIL5task", "classIL2task"]:  # Updated condition
             logger.info(f"Testing on all seen classes up to Task {current_task_id + 1}")
-            
+
             _, self.test_loader = self.tasks_dataloaders[current_task_id]
             epoch_test_loss, accuracy = self._test_step(0, current_task_id)
 
@@ -380,7 +387,7 @@ class TrainerCL(TrainerInterface):
                 f"Seen Classes - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
             )
             return
-        
+
         for task_id in range(current_task_id + 1):
             logger.info(f"Testing on Task {task_id + 1}/{current_task_id + 1}")
             _, self.test_loader = self.tasks_dataloaders[task_id]
@@ -392,11 +399,11 @@ class TrainerCL(TrainerInterface):
             )
 
             epoch_test_loss, accuracy = self._test_step(0, task_id)
-            
+
             logger.info(
                 f"Task {task_id + 1} - Loss: {epoch_test_loss:.4f}, Accuracy: {accuracy:.4f}"
             )
-    
+
     def _test_step(self, epoch, task_id):
         if self.config.setting in ["classIL5task", "classIL2task"]:
             return self._test_step_classil(epoch, task_id)
@@ -404,9 +411,13 @@ class TrainerCL(TrainerInterface):
             return super()._test_step(epoch, task_id)
 
     def _test_step_classil(self, epoch, current_task_id):
-        cumulative_loss, cumulative_accuracy = super()._test_step(epoch, current_task_id)
-        self.current_task_losses, self.current_task_accuracies = self._test_individual_tasks_classil(current_task_id)
-        
+        cumulative_loss, cumulative_accuracy = super()._test_step(
+            epoch, current_task_id
+        )
+        self.current_task_losses, self.current_task_accuracies = (
+            self._test_individual_tasks_classil(current_task_id)
+        )
+
         return cumulative_loss, cumulative_accuracy
 
     @torch.no_grad()
@@ -414,80 +425,86 @@ class TrainerCL(TrainerInterface):
         """Test individual tasks for Class IL to get per-task metrics."""
         task_losses = []
         task_accuracies = []
-        
+
         classes_per_task = self.config.classes_per_task
-        
+
         # Use the cumulative test loader (has all seen classes)
         _, cumulative_test_loader = self.tasks_dataloaders[current_task_id]
-        
+
         for task_id in range(current_task_id + 1):
             epoch_loss = 0
             total = 0
             correct = 0
-            
+
             for X, y in cumulative_test_loader:
                 X = X.to(self.device)
                 y = y.to(self.device)
-                
+
                 # Get true class labels from one-hot encoding
                 true_classes = y.argmax(dim=1)  # Shape: [batch]
-                
+
                 # Filter to only samples from this task's classes
                 task_start_class = task_id * classes_per_task
                 task_end_class = (task_id + 1) * classes_per_task
-                
+
                 # Mask for samples belonging to this task
-                task_mask = (true_classes >= task_start_class) & (true_classes < task_end_class)
-                
+                task_mask = (true_classes >= task_start_class) & (
+                    true_classes < task_end_class
+                )
+
                 if task_mask.sum() == 0:  # No samples for this task in this batch
                     continue
-                    
+
                 # Extract samples for this task
                 X_task = X[task_mask]
                 y_task = y[task_mask]
-                
+
                 # Forward pass
                 y_hat = self.model(X_task)
-                
+
                 # Extract task-specific outputs for loss/accuracy
                 task_start_output = task_id * classes_per_task
                 task_end_output = (task_id + 1) * classes_per_task
                 y_hat_task = y_hat[:, task_start_output:task_end_output]
                 y_task_specific = y_task[:, task_start_output:task_end_output]
-                
+
                 loss = self.model.loss_fn(y_hat_task, y_task_specific)
                 epoch_loss += loss.item() * X_task.shape[0]  # Weight by batch size
                 total += X_task.shape[0]
-                correct += (y_hat_task.argmax(dim=1) == y_task_specific.argmax(dim=1)).sum().item()
-            
+                correct += (
+                    (y_hat_task.argmax(dim=1) == y_task_specific.argmax(dim=1))
+                    .sum()
+                    .item()
+                )
+
             if total > 0:
                 task_losses.append(epoch_loss / total)
                 task_accuracies.append(100 * correct / total)
             else:
                 task_losses.append(0.0)
                 task_accuracies.append(0.0)
-        
+
         return task_losses, task_accuracies
 
     def _get_task_subset_for_testing(self, task_id, current_task_id):
         """Get test data for specific task with current network output size."""
         # Get indices for the specific task
-        task_indices = self.task_test_indices[task_id] 
+        task_indices = self.task_test_indices[task_id]
         task_subset = Subset(self.test_dataset, task_indices)
-        
+
         # Process with current network's output size
         num_classes_so_far = (current_task_id + 1) * self.classes_per_task
-        
+
         test_data, test_targets = self._process_data(
             task_subset,
             self.tasks[task_id],
-            lambda i: self.test_dataset.targets[task_subset.indices[i]].item()
+            lambda i: self.test_dataset.targets[task_subset.indices[i]].item(),
         )
-        
+
         return TensorDataset(
-            test_data.float(),
-            self._one_hot_encode(test_targets, num_classes_so_far)
+            test_data.float(), self._one_hot_encode(test_targets, num_classes_so_far)
         )
+
 
 class WandBTrainerCL(TrainerCL):
     def __init__(self, model, tasks_dataloaders, config):
@@ -495,7 +512,9 @@ class WandBTrainerCL(TrainerCL):
         self.task_accuracies = []
         self.global_step = 0  # Initialize a global step counter
 
-    def _log_metrics(self, metrics: Dict[str, float], step: int, task_id: Optional[int] = None):
+    def _log_metrics(
+        self, metrics: Dict[str, float], step: int, task_id: Optional[int] = None
+    ):
         """Log metrics to WandB."""
         if wandb.run is not None:
             if task_id is not None:
@@ -515,10 +534,7 @@ class WandBTrainerCL(TrainerCL):
     def _test_step(self, step: int, task_id: int = None) -> tuple:
         """Single test step with WandB logging."""
         epoch_loss, accuracy = super()._test_step(step, task_id)
-        self._log_metrics({
-            "test/loss": epoch_loss,
-            "test/accuracy": accuracy
-        }, step)
+        self._log_metrics({"test/loss": epoch_loss, "test/accuracy": accuracy}, step)
         return epoch_loss, accuracy
 
     def _test_seen_tasks(self, current_task_id: int):
@@ -526,29 +542,39 @@ class WandBTrainerCL(TrainerCL):
         if self.config.setting == "classIL":
             # For Class IL, test once on all seen classes
             logger.info(f"Testing on all seen classes up to Task {current_task_id + 1}")
-            
+
             _, self.test_loader = self.tasks_dataloaders[current_task_id]
-            epoch_test_loss, accuracy = self._test_step(self.global_step, current_task_id)
-            
+            epoch_test_loss, accuracy = self._test_step(
+                self.global_step, current_task_id
+            )
+
             # Log single accuracy for all seen classes
-            self._log_metrics({
-                "loss": epoch_test_loss,
-                "accuracy": accuracy
-            }, step=self.global_step, task_id=current_task_id)
-            
+            self._log_metrics(
+                {"loss": epoch_test_loss, "accuracy": accuracy},
+                step=self.global_step,
+                task_id=current_task_id,
+            )
+
             # Store single accuracy (not per-task)
             if len(self.task_accuracies) <= current_task_id:
                 self.task_accuracies.append([])
             self.task_accuracies[current_task_id] = [accuracy]  # Single value
-            
+
             # Log aggregated metrics
             all_accuracies = [acc[0] for acc in self.task_accuracies if acc]
             avg_accuracy = sum(all_accuracies) / len(all_accuracies)
-            self._log_metrics({
-                "metrics/avg_accuracy": avg_accuracy,
-                "metrics/forgetting": max(all_accuracies) - min(all_accuracies) if len(all_accuracies) > 1 else 0.0
-            }, step=self.global_step)
-            
+            self._log_metrics(
+                {
+                    "metrics/avg_accuracy": avg_accuracy,
+                    "metrics/forgetting": (
+                        max(all_accuracies) - min(all_accuracies)
+                        if len(all_accuracies) > 1
+                        else 0.0
+                    ),
+                },
+                step=self.global_step,
+            )
+
             return
 
         task_accuracies = []
@@ -567,17 +593,21 @@ class WandBTrainerCL(TrainerCL):
             task_accuracies.append(accuracy)
 
             # Log per-task test metrics using the current global step
-            self._log_metrics({
-                "loss": epoch_test_loss,
-                "accuracy": accuracy
-            }, step=self.global_step, task_id=task_id)
+            self._log_metrics(
+                {"loss": epoch_test_loss, "accuracy": accuracy},
+                step=self.global_step,
+                task_id=task_id,
+            )
 
         # Log aggregated metrics for all seen tasks using the current global step
         avg_accuracy = sum(task_accuracies) / len(task_accuracies)
-        self._log_metrics({
-            "metrics/avg_accuracy": avg_accuracy,
-            "metrics/forgetting": max(task_accuracies) - min(task_accuracies)
-        }, step=self.global_step)
+        self._log_metrics(
+            {
+                "metrics/avg_accuracy": avg_accuracy,
+                "metrics/forgetting": max(task_accuracies) - min(task_accuracies),
+            },
+            step=self.global_step,
+        )
         self.task_accuracies.append(task_accuracies)
 
     def train(self):
@@ -591,8 +621,11 @@ class WandBTrainerCL(TrainerCL):
 
         # Log final metrics.
         if wandb.run is not None:
-            wandb.run.summary.update({
-                "final_avg_accuracy": sum(self.task_accuracies[-1]) / len(self.task_accuracies[-1]),
-                "final_forgetting": max(self.task_accuracies[0]) - min(self.task_accuracies[-1])
-            })
-
+            wandb.run.summary.update(
+                {
+                    "final_avg_accuracy": sum(self.task_accuracies[-1])
+                    / len(self.task_accuracies[-1]),
+                    "final_forgetting": max(self.task_accuracies[0])
+                    - min(self.task_accuracies[-1]),
+                }
+            )
