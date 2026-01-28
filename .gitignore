@@ -201,3 +201,5 @@ notebook.slurm
 *.log
 
 *.csv
+
+deprecated/
