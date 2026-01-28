@@ -197,8 +197,6 @@ outputs/
 notebook.log
 notebook.slurm
 
-/deprecated
-
 *.slurm
 *.log
 
