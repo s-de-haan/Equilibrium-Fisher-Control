@@ -56,7 +56,7 @@ Every hyperparameters configuration of all models & training setting presented i
 
 1. **Run a single model with specific hyperparameters**
 
-`WANDB_MODE=disabled python train.py --config configs/single_run_template.yaml`
+`WANDB_MODE=disabled python train.py --config final_configs/single_run_template.yaml`
 
 To enable WANDB, simply run with `WANDB_MODE=enabled`. 
 

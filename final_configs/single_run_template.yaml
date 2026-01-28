@@ -8,7 +8,6 @@
 # =============================================================================
 
 name: my_experiment
-method: grid
 project: my-project
 metric:
   goal: maximize
@@ -31,7 +30,7 @@ parameters:
   #     - ClassILCIFAR5Task          : Split CIFAR-10 (5 tasks)
   #     - ClassILTinyImageNet10Task  : Split TinyImageNet (10 tasks)
   setting:
-    value: TaskILMNIST
+    value: TaskILTinyImageNet
 
   # =========================================================================
   # METHOD
@@ -43,7 +42,7 @@ parameters:
   #   - si   : Synaptic Intelligence
   #   - efc  : Equilibrium Fisher Control (ours)
   method:
-    value: efc
+    value: derpp
 
   # =========================================================================
   # NETWORK ARCHITECTURE
@@ -52,7 +51,7 @@ parameters:
   #   - Use 100 for MNIST/CIFAR experiments
   #   - Use 1000 for TinyImageNet experiments
   layer_size:
-    value: 100
+    value: 1000
 
   # Use pretrained CNN features (recommended for image datasets)
   cnn_pretrained:
@@ -153,7 +152,7 @@ parameters:
   k_p:
     value: 2.0
 
-  # EFC mode: 'di' for diagonal approximation
+  # EFC mode: 'di' for dynamical inversion, 'ndi' for non-dynamical inversion
   mode:
     value: di
 
