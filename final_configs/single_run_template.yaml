@@ -52,6 +52,8 @@ parameters:
   #   - Use 1000 for TinyImageNet experiments
   layer_size:
     value: 1000
+  output_dim:
+    value: 200
 
   # Use pretrained CNN features (recommended for image datasets)
   cnn_pretrained:
@@ -79,7 +81,7 @@ parameters:
   # SI:   0.0001-0.003 depending on setting
   # EFC:  0.0001
   lr:
-    value: 0.0001
+    value: 0.01
 
   # =========================================================================
   # RANDOM SEED
