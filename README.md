@@ -56,9 +56,9 @@ Every hyperparameters configuration of all models & training setting presented i
 
 1. **Run a single model with specific hyperparameters**
 
-`WANDB_MODE=disabled python train.py --config configs/single_run.yaml`
+`WANDB_MODE=disabled python train.py --config configs/single_run_template.yaml`
 
-To enable WANDB, simply run with `WANDD_MODE=enabled`. 
+To enable WANDB, simply run with `WANDB_MODE=enabled`. 
 
 2. **Reproduce results accross 5 seeds**
 
@@ -67,3 +67,40 @@ To enable WANDB, simply run with `WANDD_MODE=enabled`.
 If you have multiple (e.g. 4) GPUs, you can parallelize a run as such: 
 
 `python start_processes_on_gpu.py 0 1 2 3 --config final_configs/<method>/<setting>.yaml`
+
+---
+
+## Training Pipeline Structure
+
+```
+train.py                     # Entry point: CLI parsing, model/dataset selection, launches trainer
+├── src/
+│   ├── trainers.py          # TrainerCL / WandBTrainerCL: continual learning loop
+│   ├── dataloaders_2.py     # TaskIL/ClassIL dataloaders with optional CNN encoder
+│   ├── callbacks.py         # Progress bars, logging hooks
+│   └── config.py            # OmegaConf-based configuration (unused in main flow)
+└── networks/
+    ├── network_interface.py # Base Network class, FisherInterface, JacobianInterface
+    ├── EFC_network.py       # Equilibrium Fisher Control (our method)
+    ├── EWC_network.py       # Elastic Weight Consolidation baseline
+    ├── oEWC_network.py      # Online EWC baseline
+    ├── SI_network.py        # Synaptic Intelligence baseline
+    ├── BP_network.py        # Standard backprop (no regularization)
+    └── layers.py            # Custom layer implementations with backward hooks
+```
+
+### Flow
+
+1. **Configuration**: CLI args + optional YAML config → `OmegaConf` object
+2. **Model**: `get_model()` instantiates network based on `--method` (efc, ewc, oewc, si, bp)
+3. **Data**: `get_dataset()` returns a list of `(train_loader, test_loader)` per task
+4. **Training**: `WandBTrainerCL.train()` loops over tasks:
+   - For each task: trains for `epochs`, evaluates on all seen tasks
+   - Calls `model.complete_task()` to update Fisher/importance weights
+   - Resets optimizer and scheduler between tasks
+
+### Key Abstractions
+
+- **`FisherInterface`**: Computes diagonal Fisher after each task, stores θ* (optimal params)
+- **`JacobianInterface`**: Implements dynamic/non-dynamic target inversion for EFC
+- **Task masks**: `Network._setup_task_masks()` handles Class-IL vs Task-IL output masking

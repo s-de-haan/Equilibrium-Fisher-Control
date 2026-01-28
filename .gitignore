@@ -201,3 +201,5 @@ notebook.slurm
 
 *.slurm
 *.log
+
+*.csv
