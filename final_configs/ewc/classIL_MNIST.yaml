@@ -41,6 +41,6 @@ parameters:
 
   # EWC parameters
   importance_ewc:
-    value: 10.0
+    value: 4
 
 program: train.py

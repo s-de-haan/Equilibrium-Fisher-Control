@@ -10,7 +10,7 @@ parameters:
     value: TaskILTinyImageNet
 
   method:
-    value: derpp
+    value: der
 
   layer_size:
     value: 1000

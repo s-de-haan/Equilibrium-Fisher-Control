@@ -130,6 +130,22 @@ class DER_network(Network):
         # Initialize replay buffer
         self.buffer = ReplayBuffer(self.buffer_size, device=self.device)
 
+    def to(self, *args, **kwargs):
+        """Override to() to also move buffer tensors to the correct device."""
+        self = super().to(*args, **kwargs)
+
+        # Move buffer tensors to the new device
+        device = next(self.parameters()).device
+        self.buffer.device = device
+        if self.buffer.buffer_x is not None:
+            self.buffer.buffer_x = self.buffer.buffer_x.to(device)
+        if self.buffer.buffer_y is not None:
+            self.buffer.buffer_y = self.buffer.buffer_y.to(device)
+        if self.buffer.buffer_logits is not None:
+            self.buffer.buffer_logits = self.buffer.buffer_logits.to(device)
+
+        return self
+
     def forward(self, x):
         """Standard forward pass, storing full output for replay."""
         self.input = x
@@ -232,6 +248,22 @@ class DERpp_network(Network):
 
         # Initialize replay buffer
         self.buffer = ReplayBuffer(self.buffer_size, device=self.device)
+
+    def to(self, *args, **kwargs):
+        """Override to() to also move buffer tensors to the correct device."""
+        self = super().to(*args, **kwargs)
+
+        # Move buffer tensors to the new device
+        device = next(self.parameters()).device
+        self.buffer.device = device
+        if self.buffer.buffer_x is not None:
+            self.buffer.buffer_x = self.buffer.buffer_x.to(device)
+        if self.buffer.buffer_y is not None:
+            self.buffer.buffer_y = self.buffer.buffer_y.to(device)
+        if self.buffer.buffer_logits is not None:
+            self.buffer.buffer_logits = self.buffer.buffer_logits.to(device)
+
+        return self
 
     def forward(self, x):
         """Standard forward pass."""
