@@ -1,0 +1,4 @@
+- [ ] Sweep other parameters - particularly dt_di
+- [ ] Stability Gap
+- [ ] Update results from paper - Deer+ is probably higher than we report in the paper. 
+- [ ] Use the latest sweeps to update the Configs (CIFAR done.)

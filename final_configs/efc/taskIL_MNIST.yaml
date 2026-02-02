@@ -26,11 +26,11 @@ parameters:
   optimizer:
     value: Adam
   lr:
-    value: 1e-4
+    value: 3e-5
   beta_efc:
-    value: 0.1
+    value: 0.01
   target_lr:
-    value: 0.1
+    value: 0.01
 
   cnn_pretrained:
     value: True

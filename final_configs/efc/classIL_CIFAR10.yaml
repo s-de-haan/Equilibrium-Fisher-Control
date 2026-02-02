@@ -28,9 +28,9 @@ parameters:
   lr:
     value: 3e-5
   beta_efc:
-    value: 1
+    value: 10
   target_lr:
-    value: 0.01
+    value: 0.1
 
   cnn_pretrained:
     value: True
