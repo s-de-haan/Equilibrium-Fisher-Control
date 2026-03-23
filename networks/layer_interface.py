@@ -3,14 +3,14 @@ import torch.nn as nn
 
 
 class Layer(nn.Module):
-    def __init__(self, in_features, out_features, activation_fn, name):
+    def __init__(self, in_features, out_features, activation_fn, name, use_bias = True):
         super().__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.activation_fn = activation_fn
         self.name = name
-
+        self.use_bias = use_bias
         self._create_init_layer()
 
     @property
@@ -19,7 +19,10 @@ class Layer(nn.Module):
 
     @property
     def bias(self):
-        return self._bias
+        if self.use_bias:
+            return self._bias
+        else:
+            return torch.zeros_like(self._bias, device = self._bias.device)
 
     @property
     def shape(self):

@@ -75,7 +75,7 @@ class DFC_network(Network, JacobianInterface):
         # Simulate tmax timesteps
         for _ in range(self.tmax - 1):
             # Stop if converged
-            if converged_mask.float().mean().item() >= 0.95:
+            if converged_mask.float().mean().item() >= 1:
                 break
 
             error = self._compute_error(r_current[-1], self.targets)
@@ -95,6 +95,7 @@ class DFC_network(Network, JacobianInterface):
 
                 # Basal and apical
                 v_ff_current[i] += (r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i])
+                v_ff_current[i] = v_ff_current[i].clone().detach()
                 v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
                 
                 # Soma with apical
@@ -155,12 +156,6 @@ class DFC_Mult_network(Network, JacobianInterface, FisherInterface):
 
 
 class DFCL_network(Network, JacobianInterface):
-    """
-    DFC network with:
-      • Lateral connections inside hidden layers
-      • Layerwise feedback connections between successive layers
-    Neither type is used yet; they are only initialized.
-    """
 
     def __init__(self, config, name="DFCL_network"):
         # Choose activation function
@@ -206,17 +201,17 @@ class DFCL_network(Network, JacobianInterface):
         # Add a feedback matrix for each layer 
         for i in range(len(self.layers)):
             in_dim = all_sizes[i]       # lower layer dimension
-            out_dim = all_sizes[i + 1]  # higher layer dimension
+            out_dim = all_sizes[i-1]  # higher layer dimension
 
             # Weight matrix: (higher_layer ← lower_layer)
             if in_dim==784:
-                W_fb = nn.Linear(out_dim, in_dim, bias=True)
+                W_fb = Layer(out_dim, in_dim, activation_fn=Linear(), name="Linear", use_bias=False)
             else:
-                W_fb = nn.Linear(out_dim, in_dim, bias=False)
+                W_fb = Layer(out_dim, in_dim, activation_fn=Linear(), name="Linear", use_bias=False)
             k = 1.0 / in_dim
             bound = math.sqrt(k)
 
-            nn.init.uniform_(W_fb.weight, -bound, bound)
+            nn.init.uniform_(W_fb.weights, -bound, bound)
 
             if W_fb.bias is not None:
                 nn.init.uniform_(W_fb.bias, -bound, bound)
@@ -256,8 +251,8 @@ class DFCL_network(Network, JacobianInterface):
             u_next = u_int_next + self.k_p * error
 
             # Compute convergence check
-            converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            #converged_mask |= (torch.abs(error)).mean(dim=1) < 0.005
+            #converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
+            converged_mask |= (torch.abs(error)).mean(dim=1) < 0.001
 
             if converged_mask.float().mean().item() >= 0.95:
                 self.converged_per_batch.append(t_step)
@@ -281,9 +276,8 @@ class DFCL_network(Network, JacobianInterface):
                     v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
                 else:
                     v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
-                    #v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
-                    v_current[i] +=  (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
-                    #v_current[i] += (v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
+                    v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
+
                 
                 r_current[i] = layer.activation_fn(v_current[i])
 
@@ -313,9 +307,10 @@ class DFCL_network(Network, JacobianInterface):
         # === Setup ===
         self.bzs = target_activity.shape[0]
 
-        init_input_scaled = init_input.to(self.device)*10 - (5)
-        input_pre = init_input_scaled
-        self.input = torch.sigmoid(input_pre)
+        #init_input_scaled = init_input.to(self.device)*10 - (5)
+        #input_pre = init_input_scaled
+        input_pre = init_input
+        self.input = init_input#torch.sigmoid(input_pre)
 
         layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
 
@@ -342,6 +337,8 @@ class DFCL_network(Network, JacobianInterface):
 
         converged_mask = torch.zeros((self.bzs,), dtype=torch.bool, device=self.device)
 
+        diffs = []
+
         # === Dynamics ===
         for t in range(tmax - 1):
             if converged_mask.all():
@@ -353,7 +350,9 @@ class DFCL_network(Network, JacobianInterface):
             u_int_next = u_int_current + self.dt * (error - self.alpha * u_current)
             u_next = u_int_next + self.k_p * error
 
-            converged_mask |= (torch.abs(error)).mean(dim=1) < threshold
+            converged_mask = (torch.abs(error)).mean(dim=1) < threshold ### careful here
+
+            _, Js = self._calculate_full_jacobian()
 
             for i, layer in enumerate(self.layers):
                 r_prev = r_current[i - 1] if i != 0 else self.input
@@ -366,10 +365,13 @@ class DFCL_network(Network, JacobianInterface):
                 tau = self.dt / self.time_constant_ratio
 
                 if i!=1:
-                    v_fb_current[i] = (self.feedback_layers[i+1](u_next)) 
-                    v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
+                    v_fb_current[i] = (self.feedback_layers[i+1](u_next)) * layer.activation_derivative(v_current[i])
+                    v_current[i] += tau * (v_fb_current[i]* (~converged_mask.unsqueeze(1)) + v_ff_current[i] - v_current[i])
+                    
                 else:
                     v_current[i] +=  tau * (v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
+                    #v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2),u_next.unsqueeze(2)).squeeze(2)
+                    #v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
 
                 r_current[i] = layer.activation_fn(v_current[i])
 
@@ -389,9 +391,18 @@ class DFCL_network(Network, JacobianInterface):
             u_current2 = u_next2
 
             
-            grad_input = (self.feedback_layers[0](u_next2))
-            input_pre += (grad_input + init_input_scaled - input_pre) * ~converged_mask.unsqueeze(1)
-            self.input = torch.sigmoid(input_pre)
+            grad_input = (self.feedback_layers[0](r_current[-2]))
+            grad_input = torch.clamp(grad_input, -0.4242 ,2.8215)
+            grad_input += (self.feedback_layers[0](u_next2))
+            
+            #grad_input = (self.feedback_layers[0](r_current[-2]))
+            #input_pre += (grad_input + init_input_scaled - input_pre) * ~converged_mask.unsqueeze(1)
+            #input_pre += tau * (grad_input)
+            input_pre += tau* (grad_input - self.input)
+            input_post = torch.clamp(self.feedback_layers[0].activation_fn(input_pre), -0.4242 ,2.8215)
+            self.input = input_post
+            diff = torch.abs(r_current[0] - self.layers[0](self.input)).mean().detach().cpu().numpy()
+            diffs.append(diff)
             
         # === Collect steady-state representations ===
         rs = [self.input]
@@ -401,7 +412,197 @@ class DFCL_network(Network, JacobianInterface):
             layer.r_prev = rs[i]
             rs.append(r_current[i])
 
-        generated_inputs = torch.sigmoid(self.feedback_layers[0](r_current[0]))
+        generated_inputs = self.input#torch.clamp(self.feedback_layers[0](r_current[0]), -0.4242 ,2.8215).clone().detach()
 
-        return generated_inputs, rs[-1]
+        return generated_inputs, torch.softmax(rs[-1],dim=1).clone().detach(), diffs
+    
 
+
+class DFCL_network_multilayer(Network, JacobianInterface):
+
+    def __init__(self, config, name="DFCL_network"):
+        # Choose activation function
+        if "activation_fun" in config:
+            if config["activation_fun"] == "Tanh":
+                act_fun = Tanh
+            else:
+                act_fun = ReLU
+        else:
+            act_fun = ReLU
+
+        # ----- Initialize network layers -----
+        Network.__init__(self, DFC_layer, act_fun, Linear, config, name)
+
+        # ----- Initialize inversion interface -----
+        JacobianInterface.__init__(self, config)
+
+        # ----- Add lateral + feedback connections -----
+        self._init_feedback_connections()
+        self.converged_per_batch = []
+        self.mean_convergence_per_epoch = []
+
+    # ---------------------------------------------------
+    # Feedback connections: layer i+1 → layer i
+    # ---------------------------------------------------
+    def _init_feedback_connections(self):
+        """
+        feedback_weights[i] maps: layer_(i+1) → layer_(i).
+        
+        Shapes:
+            feedback[i] = [size_i , size_(i+1)]
+        Where size_k is layer out_features of layer k.
+        
+        For i = 0 (first hidden layer),
+            feedback[0] = [hidden1 , input_dim]
+        """
+
+        self.feedback_layers = nn.ModuleList()
+
+        # Gather all sizes: input + all layers' output sizes
+        all_sizes = [self.layers[0].in_features] + self.layer_sizes
+
+        # Add a feedback matrix for each layer 
+        for i in range(len(self.layers)):
+            in_dim = all_sizes[i]       # lower layer dimension
+            out_dim = all_sizes[i+1]  # higher layer dimension
+
+            # Weight matrix: (higher_layer ← lower_layer)
+            if in_dim==784:
+                W_fb = Layer(out_dim, in_dim, activation_fn=Linear(), name="Linear", use_bias=True)
+            else:
+                W_fb = Layer(out_dim, in_dim, activation_fn=Linear(), name="Linear", use_bias=False)
+            k = 1.0 / in_dim
+            bound = math.sqrt(k)
+
+            nn.init.uniform_(W_fb.weights, -bound, bound)
+
+            if W_fb.bias is not None:
+                nn.init.uniform_(W_fb.bias, -bound, bound)
+
+            self.feedback_layers.append(W_fb)
+
+        print("[DFCL] Feedback connections initialized.")
+
+
+    @torch.no_grad()
+    def _dynamical_inversion(self):
+        # Setup
+        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
+        n_layers = len(self.layers)
+
+        v_fb_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        v_ff_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+
+        # One PI controller per layer
+        u_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        u_int_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+
+        for i, layer in enumerate(self.layers):
+            v_ff_current[i] = layer.v_ff
+            v_current[i] = layer.v_ff
+            r_current[i] = layer.r
+
+        converged_mask = torch.zeros((self.bzs,), dtype=torch.bool, device=self.input.device)
+        tau = self.dt / self.time_constant_ratio
+
+        # Simulate tmax timesteps
+        for t_step in range(self.tmax - 1):
+
+            # Convergence check from current output activity
+            output_error = self._compute_error(r_current[-1], self.targets)
+            #converged_mask |= (torch.abs(output_error)).mean(dim=1) < 0.00001
+            
+
+            if converged_mask.float().mean().item() >= 1:
+                self.converged_per_batch.append(t_step)
+                break
+
+            _, Js = self._calculate_full_jacobian()
+
+            # Hold next controller values for this sweep
+            u_int_next = [u.clone() for u in u_int_current]
+            u_next = [u.clone() for u in u_current]
+
+            # Top-down sweep
+            for i in reversed(range(n_layers)):
+                layer = self.layers[i]
+                r_prev = r_current[i - 1] if i != 0 else self.input
+
+                # Basal update for this layer
+                v_ff_current[i] += (
+                    r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i]
+                ) * (~converged_mask.unsqueeze(1))
+                v_ff_current[i] = v_ff_current[i].clone().detach()
+
+                if i == n_layers - 1:
+                    # =================================================
+                    # Output layer: controller first, then activity
+                    # =================================================
+                    error_i = self._compute_error(r_current[i], self.targets)
+
+                    u_int_next[i] = u_int_current[i] + self.dt * (
+                        error_i - self.alpha * u_current[i]
+                    )
+                    u_next[i] = u_int_next[i] + self.k_p * error_i
+
+                    v_fb_current[i] = torch.bmm(
+                        Js[i].transpose(1, 2),
+                        u_next[i].unsqueeze(2)
+                    ).squeeze(2)
+
+                    v_current[i] += tau * (
+                        v_fb_current[i] + v_ff_current[i] - v_current[i]
+                    ) * (~converged_mask.unsqueeze(1))
+
+                    r_current[i] = layer.activation_fn(v_current[i])
+
+                    layer.v_ff = v_current[i]
+                    layer.r = r_current[i]
+
+                else:
+                    # =================================================
+                    # Lower layers: activity first, then controller
+                    # =================================================
+                    v_fb_current[i] = (
+                        self.feedback_layers[i + 1](u_next[i + 1])
+                        * layer.activation_derivative(v_current[i])
+                    )
+
+                    v_current[i] += tau * (
+                        v_fb_current[i] + v_ff_current[i] - v_current[i]
+                     ) * (~converged_mask.unsqueeze(1))
+
+                    r_current[i] = layer.activation_fn(v_current[i])
+
+                    layer.v_ff = v_current[i]
+                    layer.r = r_current[i]
+
+                    error_i = self._compute_error_mse(
+                        layer.activation_fn(v_ff_current[i]),
+                        r_current[i]
+                    )
+
+                    u_int_next[i] = u_int_current[i] + self.dt * (
+                        error_i - self.alpha * u_current[i]
+                    )
+                    u_next[i] = u_int_next[i] + self.k_p * error_i
+
+            converged_mask |= torch.norm(u_next[-1] - u_current[-1], dim=1) < self.eps
+
+            # Commit controller updates after full sweep
+            u_int_current = u_int_next
+            u_current = u_next
+
+        if not converged_mask.float().mean().item() >= 0.95:
+            self.converged_per_batch.append(self.tmax)
+
+        # Steady-state values per layer
+        rs = [self.input]
+
+        for i, layer in enumerate(self.layers):
+            layer.r = r_current[i]
+            layer.r_ff = layer.activation_fn(v_ff_current[i])
+            layer.r_prev = rs[i]
+            rs.append(r_current[i])

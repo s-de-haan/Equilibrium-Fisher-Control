@@ -18,6 +18,10 @@ class Sigmoid(ActivationFunction):
     def derivative(self, x):
         sig = torch.sigmoid(x)
         return sig * (1 - sig)
+    
+class ScaledSigmoid(ActivationFunction):
+    def forward(self, x):
+        return -0.4242 + 3.2457 * torch.sigmoid(x)
 
 
 class ReLU(ActivationFunction):

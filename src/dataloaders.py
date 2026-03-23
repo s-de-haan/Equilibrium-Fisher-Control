@@ -13,7 +13,7 @@ class MNIST:
         transform = transforms.Compose(
             [
                 transforms.ToTensor(),
-                #transforms.Normalize((0.1307,), (0.3081,)),
+                transforms.Normalize((0.1307,), (0.3081,)),
             ]
         )
         self.train_dataset = datasets.MNIST(
@@ -187,7 +187,9 @@ class BaseContinualDataloader:
         """Setup transforms based on dataset."""
         if self.dataset_name == "MNIST":
             self.transform = transforms.Compose(
-                [transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))]
+                [transforms.ToTensor(), 
+                 transforms.Normalize((0.1307,), (0.3081,))
+                 ]
             )
         else:  # CIFAR10
             self.transform = transforms.Compose([transforms.ToTensor()])

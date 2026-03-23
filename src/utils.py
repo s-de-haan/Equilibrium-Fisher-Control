@@ -1,12 +1,14 @@
 from collections import OrderedDict
 from typing import Any, Tuple
 import argparse
+import os
 
 import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 import torch.nn.functional as F
 
+from networks.activation_function import ScaledSigmoid
 
 
 class ModelOutput(OrderedDict):
@@ -118,7 +120,7 @@ def plot_generated_inputs(generated_inputs, n_cols=8, title="Generated Samples",
     imgs = generated_inputs.detach().cpu()
 
     # Normalize to [0, 1] for display
-    imgs = (imgs - imgs.min()) / (imgs.max() - imgs.min() + 1e-8)
+    #imgs = (imgs - imgs.min()) / (imgs.max() - imgs.min() + 1e-8)
 
     # Try to infer image dimensions (e.g. 28x28 for MNIST)
     img_size = int(imgs.shape[1] ** 0.5)
@@ -130,7 +132,8 @@ def plot_generated_inputs(generated_inputs, n_cols=8, title="Generated Samples",
     plt.figure(figsize=(n_cols * 1.5, n_rows * 1.5))
     for i in range(n_samples):
         plt.subplot(n_rows, n_cols, i + 1)
-        plt.imshow(imgs[i], cmap="gray", vmin=0.0, vmax=1.0)
+        #plt.imshow(imgs[i], cmap="gray", vmin=0.0, vmax=1.0)
+        plt.imshow(imgs[i], cmap="gray", vmin=-0.4242, vmax=2.8215)
         plt.axis("off")
 
     plt.suptitle(title, fontsize=14)
@@ -154,7 +157,12 @@ def compute_mnist_pixel_stats(data_root="./data"):
         root=data_root,
         train=True,
         download=True,
-        transform=transforms.ToTensor()
+        transform= transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,)),
+            ]
+        )
     )
 
     # Stack all images into shape (60000, 1, 28, 28)
@@ -193,7 +201,7 @@ def plot_receptive_fields(model, layer_idx=0, n_cols=8, n_rows=8, normalize=True
             rf = (rf - rf_min) / (rf_max - rf_min + 1e-8)
 
         plt.subplot(n_rows, n_cols, i + 1)
-        plt.imshow(rf, cmap="gray", vmin=0, vmax=1)
+        plt.imshow(rf, cmap="gray")
         plt.axis("off")
 
     plt.suptitle(f"Receptive Fields - Layer {layer_idx}", fontsize=14)
@@ -244,32 +252,32 @@ def visualize_reconstructions(model, dataset, sm=True, device=None, n_samples=10
     layer2_fb = model.feedback_layers[1]
 
     # From hidden layer
-    x_hat_from_hidden = torch.sigmoid(layer1_fb(r1))
+    x_hat_from_hidden = torch.clamp(layer1_fb(r1), -0.4242 ,2.8215)
 
     # From output layer (through V2 → activation → V)
     r1_reconstructed = layer1.activation_fn(layer2_fb(r2))
-    x_hat_from_output = torch.sigmoid(layer1_fb(r1_reconstructed))
+    x_hat_from_output = torch.clamp(layer1_fb(r1_reconstructed), -0.4242 ,2.8215)
 
     # === 4. Plot results ===
     plt.figure(figsize=(10, 4))
     for i in range(n_samples):
         # Original
         plt.subplot(3, n_samples, i + 1)
-        plt.imshow(x[i].view(28, 28).cpu(), cmap='gray')
+        plt.imshow(x[i].view(28, 28).cpu(), cmap='gray', vmin=-0.4242, vmax=2.8215)
         plt.axis("off")
         if i == 0:
             plt.ylabel("Original", fontsize=10)
 
         # From hidden layer
         plt.subplot(3, n_samples, n_samples + i + 1)
-        plt.imshow(x_hat_from_hidden[i].view(28, 28).cpu(), cmap='gray')
+        plt.imshow(x_hat_from_hidden[i].view(28, 28).cpu(), cmap='gray', vmin=-0.4242, vmax=2.8215)
         plt.axis("off")
         if i == 0:
             plt.ylabel("From Hidden", fontsize=10)
 
         # From output layer
         plt.subplot(3, n_samples, 2 * n_samples + i + 1)
-        plt.imshow(x_hat_from_output[i].view(28, 28).cpu(), cmap='gray')
+        plt.imshow(x_hat_from_output[i].view(28, 28).cpu(), cmap='gray', vmin=-0.4242, vmax=2.8215)
         plt.axis("off")
         if i == 0:
             plt.ylabel("From Output", fontsize=10)
@@ -282,3 +290,127 @@ def visualize_reconstructions(model, dataset, sm=True, device=None, n_samples=10
     plt.show()
 
     return x, x_hat_from_hidden, x_hat_from_output
+
+
+@torch.no_grad()
+def visualize_reconstructions_general(
+    model,
+    dataset,
+    sm=False,
+    device=None,
+    n_samples=10,
+    save=False,
+    dir="plots/",
+    filename="reconstructions.png",
+):
+    """
+    Visualize reconstructions from every layer of the model.
+
+    Assumptions:
+        - model.layers is an ordered list of forward layers
+        - model.feedback_layers decodes back toward the input
+        - feedback_layers[0] maps first hidden -> input
+        - feedback_layers[1] maps second hidden -> first hidden
+        - ...
+        - feedback_layers[-1] maps output -> previous layer
+
+    Args:
+        model: trained model
+        dataset: dataset or DataLoader
+        sm: if True, apply softmax to final layer activity before reconstruction
+        device: torch device
+        n_samples: number of examples to visualize
+        save: whether to save figure
+        dir: save directory
+        filename: save file name
+        clamp_range: tuple (min, max) or None
+    Returns:
+        x: original inputs
+        activations: list of layer activations
+        reconstructions: list of input reconstructions, one per layer
+    """
+    device = device or next(model.parameters()).device
+    model.eval()
+    scaled_sig = ScaledSigmoid()
+
+    # === 1. Get samples ===
+    if isinstance(dataset, torch.utils.data.DataLoader):
+        x, _ = next(iter(dataset))
+    else:
+        x = torch.stack([dataset[i][0] for i in range(n_samples)])
+
+    x = x[:n_samples].view(n_samples, -1).to(device)
+
+    # === 2. Forward pass, store activations ===
+    activations = []
+    r = x
+    n_layers = len(model.layers)
+
+    for i, layer in enumerate(model.layers):
+        v = layer(r)
+        if i == n_layers - 1 and sm:
+            r = F.softmax(v, dim=1)
+        else:
+            r = layer.activation_fn(v)
+        activations.append(r)
+
+    # === 3. Reconstruct from every layer back to input ===
+    reconstructions = []
+
+    for layer_idx in range(n_layers):
+        r_recon = activations[layer_idx]
+
+        # Decode down to input by chaining feedback maps:
+        # layer_idx -> layer_idx-1 -> ... -> input
+        for fb_idx in range(layer_idx, -1, -1):
+            r_recon = model.feedback_layers[fb_idx](r_recon)
+            if fb_idx > 0:
+                r_recon += model.layers[fb_idx - 1].bias.unsqueeze(0)
+                r_recon = model.layers[fb_idx - 1].activation_fn(r_recon)
+
+        scaled_sig = ScaledSigmoid()
+        r_recon = scaled_sig(r_recon)
+
+        reconstructions.append(r_recon)
+
+    # === 4. Infer image shape ===
+    input_dim = x.shape[1]
+    side = int(input_dim ** 0.5)
+    is_square = side * side == input_dim
+
+    # === 5. Plot ===
+    n_rows = 1 + n_layers
+    plt.figure(figsize=(1.5 * n_samples, 1.8 * n_rows))
+
+    for i in range(n_samples):
+        # Original
+        plt.subplot(n_rows, n_samples, i + 1)
+        if is_square:
+            plt.imshow(x[i].view(side, side).cpu(), cmap="gray")
+        else:
+            plt.imshow(x[i].view(1, -1).cpu(), cmap="gray", aspect="auto")
+        plt.axis("off")
+        if i == 0:
+            plt.ylabel("Original")
+
+        # Reconstructions from each layer
+        for l in range(n_layers):
+            plt.subplot(n_rows, n_samples, (l + 1) * n_samples + i + 1)
+            if is_square:
+                plt.imshow(reconstructions[l][i].view(side, side).cpu(), cmap="gray")
+            else:
+                plt.imshow(reconstructions[l][i].view(1, -1).cpu(), cmap="gray", aspect="auto")
+            plt.axis("off")
+            if i == 0:
+                plt.ylabel(f"Layer {l+1}")
+
+    plt.suptitle("Reconstructions from Every Layer")
+    plt.tight_layout()
+
+    if save:
+        os.makedirs(dir, exist_ok=True)
+        plt.savefig(os.path.join(dir, filename), dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+    return x, activations, reconstructions
