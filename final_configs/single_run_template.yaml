@@ -8,7 +8,7 @@
 # =============================================================================
 
 name: my_experiment
-method: grid
+method: csqn
 project: my-project
 metric:
   goal: maximize
@@ -31,7 +31,7 @@ parameters:
   #     - ClassILCIFAR5Task          : Split CIFAR-10 (5 tasks)
   #     - ClassILTinyImageNet10Task  : Split TinyImageNet (10 tasks)
   setting:
-    value: TaskILMNIST
+    value: ClassILMNIST5Task
 
   # =========================================================================
   # METHOD
@@ -109,6 +109,21 @@ parameters:
   # Typical range: 0.01 - 1.0
   si_damping:
     value: 0.1
+
+  csqn_M:
+    value: 20
+
+  csqn_method:
+    value: sr1
+
+  csqn_reduce:
+    value: null
+
+  csqn_epsilon:
+    value: 1e-4
+
+  csqn_kappa:
+    value: 1e-12
 
   # =========================================================================
   # EFC PARAMETERS (Equilibrium Fisher Control)

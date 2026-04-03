@@ -3,6 +3,7 @@ import wandb
 from omegaconf import OmegaConf
 
 from networks.BP_network import BP_network
+from networks.CSQN_network import CSQN_network
 from networks.DFC_network import DFC_network
 from networks.DER_network import DER_network, DERpp_network
 from networks.EWC_network import EWC_network
@@ -63,6 +64,15 @@ def parse_args():
     # DER-specific hyperparameters:
     parser.add_argument("--der_alpha", type=float, default=0.5, help="Alpha parameter for DER (logit distillation weight)")
     parser.add_argument("--der_beta", type=float, default=0.5, help="Beta parameter for DER++ (replay CE weight)")
+
+    # CSQN-specific hyperparameters:
+    parser.add_argument("--csqn_M", type=int, default=20, help="M parameter for CSQN")
+    parser.add_argument("--csqn_method", type=str, default="sr1", choices=["sr1", "bfgs"],
+                        help="Method for CSQN ('sr1' or 'bfgs')")
+    parser.add_argument("--csqn_reduce", type=str, default=None, choices=[None, "ct", "mrt"],
+                        help="Reduce method for CSQN ('ct', 'mrt', or None)")
+    parser.add_argument("--csqn_epsilon", type=float, default=1e-4, help="Epsilon parameter for CSQN")
+    parser.add_argument("--csqn_kappa", type=float, default=1e-12, help="Kappa parameter for CSQN")
     
     # Additional parameters:
     parser.add_argument("--dt_di", type=float, default=0.02, help="dt for dynamic inversion")
@@ -74,7 +84,7 @@ def parse_args():
                         help="Epsilon for convergence check (interplay with dt_di and target_lr)")
     
     # Continual learning settings:
-    parser.add_argument("--method", type=str, default="efc", choices=["bp", "efc", "ewc", "oewc", "si", "der", "derpp"],
+    parser.add_argument("--method", type=str, default="efc", choices=["bp", "efc", "ewc", "oewc", "si", "der", "derpp", "csqn"],
                         help="Training method to use")
     parser.add_argument("--setting", type=str, default="ClassILCIFAR5Task",
                         choices=[
@@ -122,6 +132,7 @@ def get_model(model_name: str, setting: str, config):
         "efc": EFC_network,
         "oewc": oEWC_network,
         "si": SI_network,
+        "csqn": CSQN_network,
     }
     return models[model_name](config)
 
