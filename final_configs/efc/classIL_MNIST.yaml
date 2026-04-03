@@ -26,7 +26,7 @@ parameters:
   optimizer:
     value: Adam
   lr:
-    value: 1e-4
+    value: 3e-5
   beta_efc:
     value: 1
   target_lr:

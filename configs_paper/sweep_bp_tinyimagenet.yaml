@@ -1,4 +1,4 @@
-name: derpp_taskIL_TinyImageNet
+name: sweep_bp_tinyimagenet
 method: grid
 project: paper-sweeps
 metric:
@@ -6,14 +6,24 @@ metric:
   name: final_avg_accuracy
 
 parameters:
-  setting:
-    value: TaskILTinyImageNet
-
   method:
-    value: derpp
+    value: bp
+
+  setting:
+    values:
+      - TaskILTinyImageNet
+      - ClassILTinyImageNet10Task
 
   layer_size:
     value: 1000
+
+  # Hyperparameters to sweep
+  lr:
+    values:
+      - 1e-5
+      - 3e-5
+      - 1e-4
+      - 3e-4
 
   # Fixed parameters
   batch_size:
@@ -24,9 +34,6 @@ parameters:
     value: 20
   optimizer:
     value: Adam
-  lr:
-    value: 0.001
-
   cnn_pretrained:
     value: True
 
@@ -36,13 +43,5 @@ parameters:
       - 0
       - 1
       - 2
-      - 3
-      - 4
-
-  # DER++ parameters
-  der_alpha:
-    value: 0.5
-  der_beta:
-    value: 0.5
 
 program: train.py

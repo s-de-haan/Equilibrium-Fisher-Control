@@ -113,7 +113,17 @@ def parse_args():
     # If config file provided, load it and set as defaults
     if args_initial.config is not None:
         config_from_file = OmegaConf.load(args_initial.config)
-        parser.set_defaults(**OmegaConf.to_container(config_from_file))
+        config_dict = OmegaConf.to_container(config_from_file)
+        
+        # Flatten the 'parameters' section if it exists (wandb sweep format)
+        if 'parameters' in config_dict:
+            for key, val in config_dict['parameters'].items():
+                if isinstance(val, dict) and 'value' in val:
+                    config_dict[key] = val['value']
+            # Optionally keep or remove the nested parameters
+            # del config_dict['parameters']
+        
+        parser.set_defaults(**config_dict)
 
     # Second pass: parse all arguments (CLI args override config file)
     args, unknown = parser.parse_known_args()
@@ -206,6 +216,7 @@ def main():
         config.optimizer = "SGD"
 
     print("Final configuration:")
+    print("HERE!")
     print(OmegaConf.to_yaml(config))
     
     model = get_model(config.method, config.setting, config)
