@@ -150,9 +150,14 @@ class JacobianInterface:
     def _compute_error_ce(self, y_hat, y):
         return y - self._softmax(y_hat)
 
+    """def _set_targets_mse(self, y):
+        
+        self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
+        self.output_size = self.targets.shape[1]"""
+
     def _set_targets_mse(self, y):
         """ MSE loss solution """
-        self.targets = (1 - 2 * self.target_lr) * self.y_hat + 2 * self.target_lr * y
+        self.targets = y
         self.output_size = self.targets.shape[1]
 
     def _set_targets_ce(self, y):

@@ -20,9 +20,10 @@ from src.callbacks import (
     ProgressBarCallback,
     TrainingCallback,
 )
-from src.utils import dotdict
-from torch.utils.data import Subset, TensorDataset
+from src.utils import dotdict, concat_dataloaders
+from torch.utils.data import Subset, TensorDataset, ConcatDataset, DataLoader
 import torch.nn.functional as F
+
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,12 @@ class TrainerDFCL(Trainer):
             y_hat = self.model(X)
             primary_loss = self.model.calculate_loss(y_hat, y)
 
+            with torch.no_grad():
+                self.model.label = y
+                self.optimizer.zero_grad()
+                self.model.backward(y)
+                self.optimizer.step()
+
             # ============================
             # 2. DFCL reconstruction loss
             # ============================
@@ -362,9 +369,11 @@ class TrainerDFCL(Trainer):
                     r_prev = self.model.input.clone().detach()
                     #r_rec = scaled_sig(layer_fb(r_i1))
                     r_rec = layer_fb(r_i1)
+                    #r_rec = torch.clamp(r_rec,  -0.4242, 2.8215)
                     #r_rec = torch.sigmoid(layer_fb(r_i1))
                 else:
                     r_prev = layers[i-1].r.clone().detach()
+                    #r_prev = layers[i-1].r_ff.clone().detach()
                     r_rec = layers[i-1].activation_fn(layer_fb(r_i1) + layers[i-1].bias.unsqueeze(0))
                     #r_rec = layers[i-1].activation_fn(layer_fb(r_i1))
                 
@@ -373,11 +382,11 @@ class TrainerDFCL(Trainer):
                 fb_recon_loss.backward()
                 self.opt_fb.step()
 
-            with torch.no_grad():
+            """with torch.no_grad():
                 self.model.label = y
                 self.optimizer.zero_grad()
                 self.model.backward(y)
-                self.optimizer.step()
+                self.optimizer.step()"""
             
 
 
@@ -386,167 +395,6 @@ class TrainerDFCL(Trainer):
 
         self.model.mean_convergence_per_epoch.append(np.array(self.model.converged_per_batch).mean())
 
-        return epoch_loss / len(self.train_loader)
-    
-
-
-class TrainerDFCGen(TrainerDFCL):
-    """
-    Trainer for DFCL networks:
-      • Standard DFC training
-      • Additional reconstruction loss for lateral + feedback weights
-      • ONE optimizer for all lateral weights
-      • ONE optimizer for all feedback weights
-    """
-
-    def __init__(self, model, train_loader, test_loader, config, callbacks=None):
-        super().__init__(model, train_loader, test_loader, config, callbacks)
-
-        self.recon_loss_fn = torch.nn.MSELoss()
-
-        self.num_classes = 10
-        self.bzs_gen = config.batch_size_gen
-        self.accuracies_full = []
-        self.accuracies_tasks = []
-
-    # ------------------------------------------------------------------
-    # DFCL training step
-    # ------------------------------------------------------------------
-    def _train_step(self, epoch: int):
-        self.callback_handler.on_train_step_begin(
-            training_config=self.config,
-            train_loader=self.train_loader,
-            epoch=epoch,
-        )
-
-        self.model.train()
-        epoch_loss = 0
-        layers = self.model.layers
-        self.model.converged_per_batch = []
-        Xs = []
-        Y_preds = []
-        Y_trues = []
-        c = 0
-
-        for X, y in self.train_loader:
-            if c < self.bzs_gen / 100:
-                Xs.append(X)
-
-                ypred = self.model(X.to(self.model.device))   # (B, K)
-                B, K = ypred.shape
-
-                # argmax indices
-                top1 = y.argmax(dim=1).to(self.model.device)  # (B,)
-                # sample random classes
-                rand = torch.randint(0, K - 1, (B,), device=ypred.device)
-                # shift to skip argmax
-                rand = rand + (rand >= top1).long()
-
-                Y_preds.append(rand)
-                Y_trues.append(top1)
-
-
-                c += 1
-
-            X, y = X.to(self.device), y.to(self.device)
-
-            # ============================
-            # 1. Standard DFC supervised loss
-            # ============================
-            y_hat = self.model(X)
-            primary_loss = self.model.calculate_loss(y_hat, y)
-
-            # ============================
-            # 2. DFCL reconstruction loss
-            # ============================
-
-            with torch.no_grad():
-                self.model.label = y
-                self.optimizer.zero_grad()
-                self.model.backward(y)
-                self.optimizer.step()   # feedforward
-
-            
-            # Feedback reconstruction
-            if hasattr(self.model, "feedback_weights"):
-                for i, layer in enumerate(layers):
-                    
-                    W_fb = self.model.feedback_weights[i]
-                    if W_fb is None:
-                        continue
-                    if i==len(layers)-1:
-                        r_i1 = (y).clone().detach()
-                    else:
-                        r_i1 = layer.r.clone().detach()
-                    if i==0:
-                        r_prev = self.model.input.clone().detach()
-                        r_rec = torch.sigmoid(r_i1 @ W_fb)
-                    else:
-                        r_prev = layers[i-1].r.clone().detach()
-                        r_rec = layers[i-1].activation_fn(r_i1 @ W_fb)
-                    
-                    fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
-                    self.opt_fb.zero_grad()
-                    fb_recon_loss.backward()
-                    self.opt_fb.step()
-
-
-            
-            epoch_loss += primary_loss.item()
-            self.callback_handler.on_train_step_end(training_config=self.config)
-
-        X = torch.cat(Xs, dim=0)
-        num_classes = 10
-        target = torch.cat(Y_preds,dim=0)
-        actual = torch.cat(Y_trues,dim=0)
-
-        if (epoch%10==0 and epoch!=0 and epoch!=100) or epoch>=0:
-            target_labels = F.one_hot(torch.tensor(target), num_classes=num_classes)
-            actual_labels = F.one_hot(torch.tensor(actual), num_classes=num_classes)
-
-            generated_inputs_full, generated_targets = self.model.generate_samples(target_labels, X, batch_size = self.bzs_gen, tmax = 5000)
-
-            generated_labels_full = torch.softmax(generated_targets, dim=1)
-            y_hat = self.model(generated_inputs)
-
-            for k in range(int(self.bzs_gen/100)):
-                generated_inputs = generated_inputs_full[k*100:(k*100+100)]
-                generated_labels = generated_labels_full[k*100:(k*100+100)]
-                y_hat = self.model(generated_inputs)
-                primary_loss = self.model.calculate_loss(y_hat, generated_labels) ## replace with actual_labels[k*100:(k*100+100)].float()
-
-                with torch.no_grad():
-                        self.model.label = generated_labels
-                        self.optimizer.zero_grad()
-                        self.model.backward(generated_labels)
-                        self.optimizer.step()   # feedforward
-
-                if hasattr(self.model, "feedback_weights"):
-                    for i, layer in enumerate(layers):
-                        
-                        W_fb = self.model.feedback_weights[i]
-                        if W_fb is None:
-                            continue
-                        if i==len(layers)-1:
-                            r_i1 = (generated_labels).clone().detach()
-                        else:
-                            r_i1 = layer.r.clone().detach()
-                        if i==0:
-                            r_prev = self.model.input.clone().detach()
-                            r_rec = torch.sigmoid(r_i1 @ W_fb)
-                        else:
-                            r_prev = layers[i-1].r.clone().detach()
-                            r_rec = layers[i-1].activation_fn(r_i1 @ W_fb)
-                        
-                        fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
-                        self.opt_fb.zero_grad()
-                        fb_recon_loss.backward()
-                        self.opt_fb.step()
-
-
-            
-
-        self.model.mean_convergence_per_epoch.append(np.array(self.model.converged_per_batch).mean())
         return epoch_loss / len(self.train_loader)
 
 
@@ -590,8 +438,6 @@ class TrainerCL(TrainerInterface):
                 self.best_model_state = None
                 self.peak_epoch = 0
 
-            if task_id==1:
-                self.config.epochs = 100
             for epoch in range(1, self.config.epochs + 1):
 
                 self.callback_handler.on_epoch_begin(
@@ -742,8 +588,8 @@ class TrainerCL(TrainerInterface):
                 # Extract task-specific outputs for loss/accuracy
                 task_start_output = task_id * classes_per_task
                 task_end_output = (task_id + 1) * classes_per_task
-                y_hat_task = y_hat[:, task_start_output:task_end_output]
-                y_task_specific = y_task[:, task_start_output:task_end_output]
+                y_hat_task = y_hat#y_hat[:, task_start_output:task_end_output]
+                y_task_specific = y_task#y_task[:, task_start_output:task_end_output]
                 
                 loss = self.model.loss_fn(y_hat_task, y_task_specific)
                 epoch_loss += loss.item() * X_task.shape[0]  # Weight by batch size
@@ -798,6 +644,228 @@ class TrainerCL_DFC(TrainerCL):
         self.bzs_gen = config.batch_size_gen
         self.gen_samples = []
         self.gen_targets = []
+        self.gen_datasets = []
+        self.thresholds = config["thresholds"]
+        if len(self.thresholds) != len(self.model.layers):
+            print("Wrong amount of thresholds")
+            exit
+
+        # ---- NEW: single optimizers for feedback ----
+        self._set_dfcl_optimizers()
+
+    # ------------------------------------------------------------------
+    # Create a single optimizer for all feedback weights
+    # ------------------------------------------------------------------
+    def _set_dfcl_optimizers(self):
+        lr = self.config.lr_fb  # or use config.lr_lat, config.lr_fb
+
+        self.opt_fb = torch.optim.Adam(
+            self.model.feedback_layers.parameters(), lr=lr, betas=(0.9, 0.999), eps=5.832e-07
+        ) 
+
+        print("[TrainerDFCL] Created optimizers: feedforward, 1× feedback.")
+
+    # ------------------------------------------------------------------
+    # DFCL training step
+    # ------------------------------------------------------------------
+    def _train_step(self, epoch: int):
+        self.callback_handler.on_train_step_begin(
+            training_config=self.config,
+            train_loader=self.train_loader,
+            epoch=epoch,
+        )
+
+        self.model.train()
+        epoch_loss = 0.0
+        num_updates = 0
+        layers = self.model.layers
+        self.model.converged_per_batch = []
+        num_total_classes = 10
+
+        # --------------------------------------------------------------
+        # Generate replay samples once at the beginning of each new task
+        # --------------------------------------------------------------
+        if (self.model.task_id >= 1) and (epoch == 1):
+
+            Xs = []
+            Ys = []
+            Y_preds = []
+
+            num_active_classes = min(
+                self.config["classes_per_task"] * self.model.task_id,
+                num_total_classes,
+            )
+
+            for _ in range(self.model.task_id):
+                for batch in self.train_loader:
+                    x = batch[0].to(self.device)
+                    y = batch[1].to(self.device)
+
+                    rand = torch.randint(
+                        low=0,
+                        high=num_active_classes,
+                        size=(x.shape[0],),
+                        device=self.model.device,
+                    )
+                    target = F.one_hot(rand, num_classes=num_total_classes).float()
+                    Y_preds.append(target)
+
+                    Xs.append(batch[0])
+                    Ys.append(batch[1])
+
+            init_input = torch.cat(Xs, dim=0).to(self.device)
+            target = torch.cat(Y_preds, dim=0).to(self.device)
+
+            generated_inputs_full, generated_targets, _, _, _, _, _ = self.model.generate_samples(
+                target,
+                init_input,
+                tmax=5000,
+                thresholds=self.thresholds,
+            )
+            #target = torch.softmax(self.model(generated_inputs_full), dim=1)
+
+            self.gen_samples.append(generated_inputs_full)
+            self.gen_targets.append(target)
+
+            if isinstance(generated_inputs_full, torch.Tensor):
+                gen_x = generated_inputs_full.detach().cpu()
+            else:
+                gen_x = torch.tensor(generated_inputs_full, dtype=torch.float32)
+
+            gen_y = target.detach().cpu()
+
+            ds = TensorDataset(gen_x, gen_y)
+            self.gen_datasets = [ds]
+
+        # --------------------------------------------------------------
+        # Build replay loader if replay data exists
+        # --------------------------------------------------------------
+        replay_loader = None
+        replay_iter = None
+
+        if hasattr(self, "gen_datasets") and len(self.gen_datasets) > 0:
+            replay_loader = DataLoader(
+                self.gen_datasets[0],
+                batch_size=self.train_loader.batch_size,
+                shuffle=True,
+                drop_last=False,
+                generator=torch.Generator(device=self.model.device),
+                num_workers=self.config.num_workers,
+                pin_memory=True,
+            )
+            replay_iter = iter(replay_loader)
+
+        # --------------------------------------------------------------
+        # Helper: run one batch update
+        # --------------------------------------------------------------
+        def _run_batch(X, y, update_weight=1.0, replay=False):
+            nonlocal epoch_loss, num_updates, num_total_classes
+
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            # Forward pass
+            y_hat = self.model(X)
+            primary_loss = self.model.calculate_loss(y_hat, y)
+
+            # Feedback reconstruction update
+            for j, layer in enumerate(layers):
+                layer_fb = self.model.feedback_layers[j]
+
+                if j == len(layers) - 1:
+                    if replay:
+                        r_i1 = y.argmax(dim=1).clone().detach()
+                        r_i1 = F.one_hot(r_i1, num_classes=num_total_classes).float()
+                    else:
+                        r_i1 = y.clone().detach()
+                else:
+                    r_i1 = layer.r.clone().detach()
+
+                if j == 0:
+                    r_prev = self.model.input.clone().detach()
+                    r_rec = layer_fb(r_i1)
+                else:
+                    r_prev = layers[j - 1].r.clone().detach()
+                    r_rec = layers[j - 1].activation_fn(
+                        layer_fb(r_i1) + layers[j - 1].bias.unsqueeze(0)
+                    )
+
+                fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
+                self.opt_fb.zero_grad()
+                fb_recon_loss.backward()
+                self.opt_fb.step()
+
+            # DFC forward-weight update
+            with torch.no_grad():
+                self.model.label = y
+                self.optimizer.zero_grad()
+                self.model.backward(y)
+
+                # Scale gradients for this batch
+                if update_weight != 1.0:
+                    for p in self.model.parameters():
+                        if p.grad is not None:
+                            p.grad.mul_(update_weight)
+
+                self.optimizer.step()
+
+            epoch_loss += primary_loss.item() * update_weight
+            num_updates += 1
+            self.callback_handler.on_train_step_end(training_config=self.config)
+
+        # --------------------------------------------------------------
+        # Main training loop:
+        # one real batch + one replay batch (if available)
+        # --------------------------------------------------------------
+        current_weight = 1/(self.model.task_id+1)
+        replay_weight = 1 - current_weight
+
+        for X_real, y_real in self.train_loader:
+            # Real batch update
+            _run_batch(X_real, y_real, update_weight=current_weight)
+
+            # Replay batch update
+            if replay_loader is not None:
+                try:
+                    X_rep, y_rep = next(replay_iter)
+                except StopIteration:
+                    replay_iter = iter(replay_loader)
+                    X_rep, y_rep = next(replay_iter)
+
+                _run_batch(X_rep, y_rep, update_weight=replay_weight, replay=True)
+
+        # --------------------------------------------------------------
+        # Logging
+        # --------------------------------------------------------------
+        if len(self.model.converged_per_batch) > 0:
+            self.model.mean_convergence_per_epoch.append(
+                np.array(self.model.converged_per_batch).mean()
+            )
+        else:
+            self.model.mean_convergence_per_epoch.append(np.nan)
+
+        return epoch_loss / max(num_updates, 1)
+    
+
+class TrainerCL_DFC2(TrainerCL):
+    """
+    Trainer for DFCL networks:
+      • Standard DFC training
+      • Additional reconstruction loss for feedback weights
+      • ONE optimizer for all lateral weights
+      • ONE optimizer for all feedback weights
+    """
+
+    def __init__(self, model, tasks_dataloaders, config, callbacks=None):
+        super().__init__(model, tasks_dataloaders, config, callbacks)
+
+        self.recon_loss_fn = torch.nn.MSELoss()
+
+        self.num_classes = 10
+        self.bzs_gen = config.batch_size_gen
+        self.gen_samples = []
+        self.gen_targets = []
+        self.gen_datasets = []
 
         # ---- NEW: single optimizers for feedback ----
         self._set_dfcl_optimizers()
@@ -828,145 +896,101 @@ class TrainerCL_DFC(TrainerCL):
         epoch_loss = 0
         layers = self.model.layers
         self.model.converged_per_batch = []
+        Xs = []
+        Ys = []
+        Y_preds = []
 
-        if (self.model.task_id==1):
-            self.model.tmax=2
+        # Generate replay samples for every task_id >= 1
+        if (self.model.task_id >= 1) and epoch==1:
+            
+            num_total_classes = 10
+            num_active_classes = min(self.config["classes_per_task"] * self.model.task_id, num_total_classes)
 
-        if (self.model.task_id==1) or epoch>200:
-
-            """Xs = []   
-            Ys = []
-            Y_preds = []
-
+ 
             for batch in self.train_loader:
                 x = batch[0].to(self.device)
                 y = batch[1].to(self.device)
 
-                #ypred = self.model(x)
-
-                #restricted_logits = ypred[:, :5]
-
-                #target = F.one_hot(restricted_logits.argmax(dim=1), num_classes=10).long()
-
-                K = 6
-                rand = torch.randint(0, K - 1, (x.shape[0],), device=self.model.device)
-                target = F.one_hot(torch.tensor(rand), num_classes=10)
+                rand = torch.randint(
+                    low=2*(self.model.task_id-1),
+                    high=2*(self.model.task_id-1)+2,
+                    size=(x.shape[0],),
+                    device=self.model.device,
+                )
+                target = F.one_hot(rand, num_classes=num_total_classes).float()
                 Y_preds.append(target)
 
                 Xs.append(batch[0])
                 Ys.append(batch[1])
+               
 
             init_input = torch.cat(Xs, dim=0)
             target = torch.cat(Y_preds, dim=0)
+            
 
-            generated_inputs_full, generated_targets, _ = self.model.generate_samples(target.to(self.device), init_input.to(self.device), tmax = 2000, threshold = 0.01)"""
+            generated_inputs_full, generated_targets, _, _, _, _, _ = self.model.generate_samples(
+                target,
+                init_input,
+                tmax=5000,
+                thresholds=[0.001, 0.001, 0.001, 0.001],
+            )
 
-
-            init_input = 2 * torch.rand(self.bzs_gen, 200, device=self.model.device) - 1
-            init_input = torch.clamp(self.model.feedback_layers[0](init_input), -0.4242, 2.8215)
-
-            # sample random classes
-            K = 6
-            rand = torch.randint(0, K - 1, (self.bzs_gen,), device=self.model.device)
-            target_labels = F.one_hot(torch.tensor(rand), num_classes=10)
-            generated_inputs_full, generated_targets, _ = self.model.generate_samples(target_labels, init_input, tmax = 1000, threshold = 0.01)
-            target = self.model(generated_inputs_full).softmax(dim=1).clone().detach().argmax(dim=1)
-
-            target = F.one_hot(torch.tensor(target), num_classes=10).clone().detach()
+            #target = self.model(generated_inputs_full).softmax(dim=1).clone().detach()
             self.gen_samples.append(generated_inputs_full)
             self.gen_targets.append(target)
+            ds = TensorDataset(torch.tensor(generated_inputs_full).detach().cpu(), (target).detach().cpu())
+            self.gen_datasets.append(ds)
 
         
+        new_train_loader = concat_dataloaders(
+            [self.train_loader.dataset] +
+            [self.gen_datasets],
+            ref_dl=self.train_loader
+        )
 
-        for i, (X, y) in enumerate(self.train_loader):
-            
+        for i, (X, y) in enumerate(new_train_loader):
             X, y = X.to(self.device), y.to(self.device)
-
-            """if (self.model.task_id==1) or epoch>200:
-                X = torch.cat([X, self.gen_samples[-1][i*100:(i*100+X.shape[0])].clone().detach()], dim=0)
-                y = torch.cat([y, self.gen_targets[-1][i*100:(i*100+y.shape[0])].clone().detach()], dim=0)
-                X = self.gen_samples[-1][i*100:(i*100+X.shape[0])].clone().detach()
-                y = self.gen_targets[-1][i*100:(i*100+y.shape[0])].clone().detach().float()"""
 
             y_hat = self.model(X)
             primary_loss = self.model.calculate_loss(y_hat, y)
 
-            with torch.no_grad():
-                self.model.label = y
-                self.optimizer.zero_grad()
-                self.model.backward(y)
-                self.optimizer.step() 
-
-            
             # Feedback reconstruction
-            for i, layer in enumerate(layers):
-                
-                layer_fb = self.model.feedback_layers[i]
-                if i==len(layers)-1:
-                    #r_i1 = torch.softmax(layer.r, dim=1).clone().detach()
-                    #r_i1 = layer.r.clone().detach()
+            for j, layer in enumerate(layers):
+                layer_fb = self.model.feedback_layers[j]
+
+                if j == len(layers) - 1:
                     r_i1 = y.clone().detach()
+                    #r_i1 = torch.softmax(layer.r, dim=1).clone().detach()
                 else:
                     r_i1 = layer.r.clone().detach()
 
-                if i==0:
+                if j == 0:
                     r_prev = self.model.input.clone().detach()
-                    r_rec = torch.clamp(layer_fb(r_i1), -0.4242, 2.8215)
-                    #r_rec = layer_fb(r_i1)
+                    r_rec = layer_fb(r_i1)
                 else:
-                    r_prev = layers[i-1].r.clone().detach()
-                    r_rec = layers[i-1].activation_fn(layer_fb(r_i1))
-                
+                    r_prev = layers[j - 1].r.clone().detach()
+                    r_rec = layers[j - 1].activation_fn(
+                        layer_fb(r_i1) + layers[j - 1].bias.unsqueeze(0)
+                    )
+
                 fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
                 self.opt_fb.zero_grad()
                 fb_recon_loss.backward()
                 self.opt_fb.step()
 
-            
 
-            
+            with torch.no_grad():
+                self.model.label = y
+                self.optimizer.zero_grad()
+                self.model.backward(y)
+                self.optimizer.step()
+
             epoch_loss += primary_loss.item()
-            self.callback_handler.on_train_step_end(training_config=self.config)   
+            self.callback_handler.on_train_step_end(training_config=self.config)
 
-        if (self.model.task_id==1):
-            for j in range(1):
-                for i in range(int(len(self.gen_samples[-1])/100)):
-                    
-                    X = self.gen_samples[-1][i*100:(i*100+100)].clone().detach().to(self.device)
-                    y = self.gen_targets[-1][i*100:(i*100+100)].clone().detach().float().to(self.device)
-            
-                    y_hat = self.model(X)
-
-                    with torch.no_grad():
-                        self.model.label = y
-                        self.optimizer.zero_grad()
-                        self.model.backward(y)
-                        self.optimizer.step()  
-
-                    # Feedback reconstruction
-                    for i, layer in enumerate(layers):
-                        
-                        layer_fb = self.model.feedback_layers[i]
-                        if i==len(layers)-1:
-                            r_i1 = y.clone().detach()
-                        else:
-                            r_i1 = layer.r.clone().detach()
-
-                        if i==0:
-                            r_prev = self.model.input.clone().detach()
-                            r_rec = torch.clamp(layer_fb(r_i1), -0.4242, 2.8215)
-                        else:
-                            r_prev = layers[i-1].r.clone().detach()
-                            r_rec = layers[i-1].activation_fn(layer_fb(r_i1))
-                        
-                        fb_recon_loss = self.recon_loss_fn(r_rec, r_prev)
-                        self.opt_fb.zero_grad()
-                        fb_recon_loss.backward()
-                        self.opt_fb.step()
-
-                    
-
-        self.model.mean_convergence_per_epoch.append(np.array(self.model.converged_per_batch).mean())
+        self.model.mean_convergence_per_epoch.append(
+            np.array(self.model.converged_per_batch).mean()
+        )
         return epoch_loss / len(self.train_loader)
 
 class WandBTrainerCL(TrainerCL):

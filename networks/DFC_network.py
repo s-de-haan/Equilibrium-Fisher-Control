@@ -252,7 +252,7 @@ class DFCL_network(Network, JacobianInterface):
 
             # Compute convergence check
             #converged_mask |= torch.norm(u_next - u_current, dim=1) < self.eps
-            converged_mask |= (torch.abs(error)).mean(dim=1) < 0.001
+            converged_mask |= (torch.abs(error)).mean(dim=1) < 0.00001
 
             if converged_mask.float().mean().item() >= 0.95:
                 self.converged_per_batch.append(t_step)
@@ -272,7 +272,7 @@ class DFCL_network(Network, JacobianInterface):
                 v_ff_current[i] = v_ff_current[i].clone().detach()
                 
                 if i!=len(self.layers)-1:
-                    v_fb_current[i] = self.feedback_layers[-(i+1)](u_next)*0.1 * layer.activation_derivative(v_current[i])
+                    v_fb_current[i] = self.feedback_layers[-(i+1)](u_next) * layer.activation_derivative(v_ff_current[i])
                     v_current[i] += tau * (v_fb_current[i] + v_ff_current[i] - v_current[i]) * (~converged_mask.unsqueeze(1))
                 else:
                     v_fb_current[i] = torch.bmm(Js[i].transpose(1, 2), u_next.unsqueeze(2)).squeeze(2)
@@ -489,6 +489,7 @@ class DFCL_network_multilayer(Network, JacobianInterface):
         # Setup
         layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
         n_layers = len(self.layers)
+        thresholds = [0.00001,0.00001,0.00001,0.00001]
 
         v_fb_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
         v_ff_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
@@ -513,7 +514,8 @@ class DFCL_network_multilayer(Network, JacobianInterface):
             # Convergence check from current output activity
             output_error = self._compute_error(r_current[-1], self.targets)
             #converged_mask |= (torch.abs(output_error)).mean(dim=1) < 0.00001
-            
+            converged_mask_per_layer = [torch.zeros((self.bzs,), dtype=torch.bool, device=self.input.device)] * n_layers
+
 
             if converged_mask.float().mean().item() >= 1:
                 self.converged_per_batch.append(t_step)
@@ -533,7 +535,7 @@ class DFCL_network_multilayer(Network, JacobianInterface):
                 # Basal update for this layer
                 v_ff_current[i] += (
                     r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i]
-                ) * (~converged_mask.unsqueeze(1))
+                ) #* (~converged_mask.unsqueeze(1))
                 v_ff_current[i] = v_ff_current[i].clone().detach()
 
                 if i == n_layers - 1:
@@ -554,7 +556,7 @@ class DFCL_network_multilayer(Network, JacobianInterface):
 
                     v_current[i] += tau * (
                         v_fb_current[i] + v_ff_current[i] - v_current[i]
-                    ) * (~converged_mask.unsqueeze(1))
+                    ) #* (~converged_mask.unsqueeze(1))
 
                     r_current[i] = layer.activation_fn(v_current[i])
 
@@ -567,12 +569,16 @@ class DFCL_network_multilayer(Network, JacobianInterface):
                     # =================================================
                     v_fb_current[i] = (
                         self.feedback_layers[i + 1](u_next[i + 1])
-                        * layer.activation_derivative(v_current[i])
-                    )
+                        * layer.activation_derivative(v_ff_current[i])
+                    ) * (~converged_mask_per_layer[i + 1].unsqueeze(1))
+                    """v_fb_current[i] = (
+                        u_next[i + 1]@self.layers[i + 1].weights
+                        * layer.activation_derivative(v_ff_current[i])
+                    )"""
 
                     v_current[i] += tau * (
-                        v_fb_current[i] + v_ff_current[i] - v_current[i]
-                     ) * (~converged_mask.unsqueeze(1))
+                        v_fb_current[i] + v_ff_current[i] - v_current[i] - u_next[i]* (~converged_mask_per_layer[i].unsqueeze(1))
+                     ) #* (~converged_mask.unsqueeze(1))
 
                     r_current[i] = layer.activation_fn(v_current[i])
 
@@ -589,6 +595,7 @@ class DFCL_network_multilayer(Network, JacobianInterface):
                     )
                     u_next[i] = u_int_next[i] + self.k_p * error_i
 
+                converged_mask_per_layer[i] = torch.abs(error_i).mean(dim=1) < thresholds[i]
             converged_mask |= torch.norm(u_next[-1] - u_current[-1], dim=1) < self.eps
 
             # Commit controller updates after full sweep
@@ -606,3 +613,156 @@ class DFCL_network_multilayer(Network, JacobianInterface):
             layer.r_ff = layer.activation_fn(v_ff_current[i])
             layer.r_prev = rs[i]
             rs.append(r_current[i])
+
+    @torch.no_grad()
+    def generate_samples(self, target_activity, init_input=None, batch_size=10, tmax=500, pixel_std=None, pixel_mean=None, thresholds=[0.1, 0.1, 0.001]):
+        # === Setup ===
+        self.targets = target_activity
+        self.bzs = target_activity.shape[0]
+
+        # Initialize input (random if none provided)
+        if init_input is None:
+            init_input_scaled = (
+                torch.clamp(torch.randn(batch_size, 28 * 28, device=self.device)
+                * pixel_std.flatten().to(self.device)
+                + pixel_mean.flatten().to(self.device), -0.4242, 2.8215)
+            )
+            self.input = init_input_scaled
+        else:
+            self.input = init_input.to(self.device)
+
+        layer_out_dims = [layer.weights.shape[0] for layer in self.layers]
+
+        v_fb_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        v_ff_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        v_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        r_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+
+        # One PI controller per layer
+        u_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+        u_int_current = [torch.zeros((self.bzs, lod), device=self.input.device) for lod in layer_out_dims]
+
+        # Forward init
+        r_prev = self.input
+        for i, layer in enumerate(self.layers):
+            v_ff_current[i] = r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0)
+            v_current[i] = v_ff_current[i].clone()
+            r_current[i] = layer.activation_fn(v_ff_current[i])
+            r_prev = r_current[i]
+
+        _ = self(self.input)
+
+        diffs = []
+        diffs2 = []
+        diffs3 = []
+        video = [self.input[12].clone()]
+        rs_hist = [self.layers[-1].r[12].clone()]
+
+        tau = self.dt / self.time_constant_ratio
+        n_layers = len(self.layers)
+
+        # Simulate tmax timesteps
+        for t_step in range(tmax - 1):
+            # store updated controllers for this step
+            u_next = [u.clone() for u in u_current]
+            u_int_next = [u.clone() for u in u_int_current]
+
+            # convergence mask for every controller
+            converged_mask_per_layer = [None] * n_layers
+
+            # Iterate from output layer down to first hidden layer
+            for i in reversed(range(n_layers)):
+                layer = self.layers[i]
+
+                # --- 1) Update controller for this layer ---
+                if i != n_layers - 1:
+                    error_i = self._compute_error_mse(
+                        layer.activation_fn(v_ff_current[i]),
+                        r_current[i]
+                    )
+                else:
+                    error_i = self._compute_error(r_current[i], self.targets)
+
+                u_int_next[i] = u_int_current[i] + self.dt * (error_i - self.alpha * u_current[i])
+                u_next[i] = u_int_next[i] + self.k_p * error_i 
+
+                converged_mask_per_layer[i] = torch.abs(error_i).mean(dim=1) < thresholds[i]
+
+                # --- 2) Update activity for this layer ---
+                r_prev = r_current[i - 1] if i != 0 else self.input
+
+                # Basal update
+                v_ff_current[i] += (
+                    r_prev.mm(layer.weights.t()) + layer.bias.unsqueeze(0) - v_ff_current[i]
+                )
+                v_ff_current[i] = v_ff_current[i].clone().detach()
+
+                # Apical / soma update
+                if i != n_layers - 1:
+                    v_fb_current[i] = (self.feedback_layers[i + 1](u_next[i + 1])) #*  layer.activation_derivative(v_current[i])
+                    #v_fb_current[i] = (u_next[i + 1])@self.layers[i+1].weights
+                    v_current[i] += tau * (
+                        v_fb_current[i] * (~converged_mask_per_layer[i + 1].unsqueeze(1))
+                        + v_ff_current[i] - v_current[i]
+                        - u_next[i] * (~converged_mask_per_layer[i].unsqueeze(1))
+                    )
+                else:
+                    v_current[i] += tau * (v_ff_current[i] - v_current[i])
+
+                r_current[i] = layer.activation_fn(v_current[i])
+
+                layer.v_ff = v_current[i]
+                layer.r = r_current[i]
+
+            # Commit controller updates after full downward sweep
+            u_int_current = u_int_next
+            u_current = u_next
+
+            # Input update
+            grad_input = self.feedback_layers[0](self.layers[0].activation_fn(v_current[0])) 
+            grad_input += self.feedback_layers[0](u_next[0]) 
+
+            self.input += tau * (grad_input - torch.abs(self.input))
+            self.input = torch.clamp(self.input, -0.4242, 2.8215)
+
+            video.append(self.input[12].clone())
+            rs_hist.append(self.layers[-1].r[12].clone())
+
+            diff = torch.abs(
+                r_current[0] - self.layers[0].activation_fn(v_ff_current[0])
+            ).mean().detach().cpu().numpy()
+            diffs.append(diff)
+
+            if len(self.layers) > 1:
+                diff2 = torch.abs(
+                    r_current[1] - self.layers[1].activation_fn(v_ff_current[1])
+                ).mean().detach().cpu().numpy()
+                diffs2.append(diff2)
+            
+            if len(self.layers) > 2:
+                diff3 = torch.abs(
+                    r_current[2] - self.layers[2].activation_fn(v_ff_current[2])
+                ).mean().detach().cpu().numpy()
+                diffs3.append(diff3)
+
+
+        # === Collect steady-state representations ===
+        rs = [self.input]
+        for i, layer in enumerate(self.layers):
+            layer.r = r_current[i]
+            layer.r_ff = layer.activation_fn(v_ff_current[i])
+            layer.r_prev = rs[i]
+            rs.append(r_current[i])
+
+        print(converged_mask_per_layer[-1].sum())
+
+        generated_inputs = self.input
+
+        if len(diffs) > 0:
+            print(diffs[-1])
+        if len(diffs2) > 0:
+            print(diffs2[-1])
+        if len(diffs3) > 0:
+            print(diffs3[-1])
+
+        return generated_inputs, rs, video, diffs, diffs2, diffs3, rs_hist

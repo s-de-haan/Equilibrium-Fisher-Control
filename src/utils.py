@@ -7,6 +7,8 @@ import torch
 import matplotlib.pyplot as plt
 from torchvision import datasets, transforms
 import torch.nn.functional as F
+from torch.utils.data import ConcatDataset, DataLoader
+
 
 from networks.activation_function import ScaledSigmoid
 
@@ -414,3 +416,34 @@ def visualize_reconstructions_general(
     plt.show()
 
     return x, activations, reconstructions
+
+
+def concat_dataloaders(datasets, ref_dl, shuffle=True):
+    """
+    Concatenate multiple PyTorch DataLoaders into one.
+
+    Args:
+        dataloaders (list): list of DataLoader objects
+        shuffle (bool): whether to shuffle the combined dataset
+
+    Returns:
+        DataLoader: new combined DataLoader
+    """
+
+
+    # Combine datasets
+    combined_dataset = ConcatDataset(datasets)
+
+
+    g = torch.Generator(device="cuda")
+
+    combined_loader = DataLoader(
+        combined_dataset,
+        batch_size=ref_dl.batch_size,
+        shuffle=shuffle,
+        num_workers=ref_dl.num_workers,
+        pin_memory=getattr(ref_dl, "pin_memory", False),
+        generator=g
+    )
+
+    return combined_loader
